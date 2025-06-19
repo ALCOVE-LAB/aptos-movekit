@@ -133,12 +133,6 @@ module movekit::access_control_core {
         );
     }
 
-    // Public init function for testing only
-    #[test_only]
-    public fun init_for_testing(admin: &signer) {
-        init_module(admin);
-    }
-
     /// Grants a role to an address
     fun grant_role_internal<T>(admin: &signer, target: &signer) {
         assert!(
@@ -174,4 +168,11 @@ module movekit::access_control_core {
             RoleRevokedEvent<T> { admin: signer::address_of(admin), target: target }
         );
     }
+
+    // Public init function for testing only
+    #[test_only]
+    public fun init_for_testing(admin: &signer) {
+        init_module(admin);
+    }
+
 }
