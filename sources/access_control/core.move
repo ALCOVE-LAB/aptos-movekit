@@ -13,12 +13,12 @@ module movekit::access_control_core {
     /// Global admin registry - stores current admin address
     /// TODO: Consider making this generic/per-module in future versions
     struct AdminRegistry has key {
-        current_admin: address,
+        current_admin: address
     }
 
     /// Stores pending admin transfer
     struct PendingAdmin has key, drop {
-        pending_admin: address,
+        pending_admin: address
     }
 
     /// Built-in admin tag.  Other modules may define their own empty structs.
@@ -96,7 +96,7 @@ module movekit::access_control_core {
         let admin_addr = signer::address_of(admin);
         assert!(is_current_admin(admin_addr), E_NOT_ADMIN);
         assert!(new_admin != admin_addr, E_SELF_TRANSFER_NOT_ALLOWED);
-        
+
         // Set or update pending admin
         if (exists<PendingAdmin>(admin_addr)) {
             let pending = borrow_global_mut<PendingAdmin>(admin_addr);
@@ -105,36 +105,34 @@ module movekit::access_control_core {
             move_to(admin, PendingAdmin { pending_admin: new_admin });
         };
 
-        event::emit(AdminTransferProposed {
-            current_admin: admin_addr,
-            pending_admin: new_admin
-        });
+        event::emit(
+            AdminTransferProposed { current_admin: admin_addr, pending_admin: new_admin }
+        );
     }
 
     /// Step 2: New admin accepts the transfer
     public fun accept_pending_admin(new_admin: &signer) acquires Role, PendingAdmin, AdminRegistry {
         let new_admin_addr = signer::address_of(new_admin);
         let current_admin = get_current_admin();
-        
+
         assert!(exists<PendingAdmin>(current_admin), E_NO_PENDING_ADMIN);
         let pending = borrow_global<PendingAdmin>(current_admin);
         assert!(pending.pending_admin == new_admin_addr, E_NOT_PENDING_ADMIN);
-        
+
         // Transfer the admin role
         move_from<Role<Admin>>(current_admin);
         move_to<Role<Admin>>(new_admin, Role<Admin> {});
-        
+
         // Update admin registry
         let registry = borrow_global_mut<AdminRegistry>(@movekit);
         registry.current_admin = new_admin_addr;
-        
+
         // Clean up pending admin
         move_from<PendingAdmin>(current_admin);
 
-        event::emit(AdminTransferCompleted {
-            old_admin: current_admin,
-            new_admin: new_admin_addr
-        });
+        event::emit(
+            AdminTransferCompleted { old_admin: current_admin, new_admin: new_admin_addr }
+        );
     }
 
     /// Cancel pending admin transfer
@@ -142,13 +140,15 @@ module movekit::access_control_core {
         let admin_addr = signer::address_of(admin);
         assert!(is_current_admin(admin_addr), E_NOT_ADMIN);
         assert!(exists<PendingAdmin>(admin_addr), E_NO_PENDING_ADMIN);
-        
+
         let pending = move_from<PendingAdmin>(admin_addr);
-        
-        event::emit(AdminTransferCanceled {
-            admin: admin_addr,
-            canceled_pending: pending.pending_admin
-        });
+
+        event::emit(
+            AdminTransferCanceled {
+                admin: admin_addr,
+                canceled_pending: pending.pending_admin
+            }
+        );
     }
 
     #[view]
@@ -213,7 +213,10 @@ module movekit::access_control_core {
 
     /// Utility function - assert account has role or abort
     public fun require_role<T>(account: &signer) {
-        assert!(has_role<T>(signer::address_of(account)), E_NO_SUCH_ROLE);
+        assert!(
+            has_role<T>(signer::address_of(account)),
+            E_NO_SUCH_ROLE
+        );
     }
 
     // -- Internal Functions Section -- //
@@ -221,12 +224,10 @@ module movekit::access_control_core {
     /// Bootstrap: give the deployer the Admin role and create admin registry
     fun init_module(admin: &signer) {
         let admin_addr = signer::address_of(admin);
-        
+
         // Create admin registry first
-        move_to(admin, AdminRegistry {
-            current_admin: admin_addr,
-        });
-        
+        move_to(admin, AdminRegistry { current_admin: admin_addr });
+
         // Grant Admin role to caller
         assert!(
             !exists<Role<Admin>>(admin_addr),
@@ -235,10 +236,7 @@ module movekit::access_control_core {
         move_to<Role<Admin>>(admin, Role<Admin> {});
 
         event::emit(
-            RoleGrantedEvent<Admin> {
-                admin: admin_addr,
-                target: admin_addr
-            }
+            RoleGrantedEvent<Admin> { admin: admin_addr, target: admin_addr }
         );
     }
 

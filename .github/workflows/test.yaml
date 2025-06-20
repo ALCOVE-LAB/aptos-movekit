@@ -15,5 +15,8 @@ jobs:
           curl -fsSL https://aptos.dev/scripts/install_cli.py | python3
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Run Move tests
+      - name: Run Aptos Move Tests
         run: aptos move test --dev
+
+      - name: Run Aptos Move Linter
+        run: aptos move lint --dev 
