@@ -15,6 +15,7 @@ module movekit::access_control_core_tests {
     const E_NO_PENDING_ADMIN: u64 = 3;
     const E_NOT_PENDING_ADMIN: u64 = 4;
     const E_NOT_INITIALIZED: u64 = 5;
+    const E_SELF_TRANSFER_NOT_ALLOWED: u64 = 6;
 
     // ===========================================
     // INITIALIZATION & ADMIN REGISTRY TESTS
@@ -160,7 +161,7 @@ module movekit::access_control_core_tests {
     }
 
     #[test(admin = @movekit)]
-    #[expected_failure(abort_code = E_ALREADY_HAS_ROLE, location = movekit::access_control_core)]
+    #[expected_failure(abort_code = E_SELF_TRANSFER_NOT_ALLOWED, location = movekit::access_control_core)]
     fun test_transfer_admin_to_self(admin: &signer) {
         access_control_core::init_for_testing(admin);
         let admin_addr = signer::address_of(admin);

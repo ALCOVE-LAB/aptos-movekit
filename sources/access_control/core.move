@@ -33,6 +33,7 @@ module movekit::access_control_core {
     const E_NO_PENDING_ADMIN: u64 = 3;
     const E_NOT_PENDING_ADMIN: u64 = 4;
     const E_NOT_INITIALIZED: u64 = 5;
+    const E_SELF_TRANSFER_NOT_ALLOWED: u64 = 6;
 
     // -- Events Section -- //
 
@@ -94,7 +95,7 @@ module movekit::access_control_core {
     public fun transfer_admin(admin: &signer, new_admin: address) acquires AdminRegistry, PendingAdmin {
         let admin_addr = signer::address_of(admin);
         assert!(is_current_admin(admin_addr), E_NOT_ADMIN);
-        assert!(new_admin != admin_addr, E_ALREADY_HAS_ROLE);
+        assert!(new_admin != admin_addr, E_SELF_TRANSFER_NOT_ALLOWED);
         
         // Set or update pending admin
         if (exists<PendingAdmin>(admin_addr)) {
