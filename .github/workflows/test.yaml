@@ -1,0 +1,19 @@
+name: CI
+
+"on": [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Aptos CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://aptos.dev/scripts/install_cli.py | python3
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run Move tests
+        run: aptos move test --dev
