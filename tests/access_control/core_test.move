@@ -1,6 +1,7 @@
 #[test_only]
 module movekit::access_control_core_tests {
     use std::signer;
+    use std::vector;
     use movekit::access_control_core::{Self, Admin};
 
     // Test role types
@@ -33,8 +34,11 @@ module movekit::access_control_core_tests {
         assert!(access_control_core::get_current_admin() == deployer_addr, 0);
         assert!(access_control_core::is_current_admin(deployer_addr), 1);
 
-        // Check admin role was granted
+        // Check admin role was granted in global registry
         assert!(access_control_core::has_role<Admin>(deployer_addr), 2);
+
+        // Check role count
+        assert!(access_control_core::get_role_count(deployer_addr) == 1, 3);
     }
 
     #[test(deployer = @movekit)]
@@ -111,7 +115,7 @@ module movekit::access_control_core_tests {
         assert!(access_control_core::is_current_admin(new_admin_addr), 6);
         assert!(!access_control_core::is_current_admin(admin_addr), 7);
 
-        // Check roles transferred
+        // Check roles transferred in global registry
         assert!(access_control_core::has_role<Admin>(new_admin_addr), 8);
         assert!(!access_control_core::has_role<Admin>(admin_addr), 9);
 
@@ -187,6 +191,26 @@ module movekit::access_control_core_tests {
         access_control_core::transfer_admin(admin, admin_addr);
     }
 
+    #[test(admin = @movekit, new_admin = @0x123, wrong_admin = @0x456)]
+    #[
+        expected_failure(
+            abort_code = E_NOT_PENDING_ADMIN, location = movekit::access_control_core
+        )
+    ]
+    fun test_accept_pending_admin_wrong_address(
+        admin: &signer, new_admin: &signer, wrong_admin: &signer
+    ) {
+        // Setup
+        access_control_core::init_for_testing(admin);
+        let new_admin_addr = signer::address_of(new_admin);
+
+        // Propose transfer to new_admin
+        access_control_core::transfer_admin(admin, new_admin_addr);
+
+        // Should fail - wrong_admin tries to accept
+        access_control_core::accept_pending_admin(wrong_admin);
+    }
+
     #[test(new_admin = @0x123)]
     #[
         expected_failure(
@@ -212,26 +236,6 @@ module movekit::access_control_core_tests {
 
         // Should fail - no pending admin transfer (but admin registry is initialized)
         access_control_core::accept_pending_admin(new_admin);
-    }
-
-    #[test(admin = @movekit, new_admin = @0x123, wrong_admin = @0x456)]
-    #[
-        expected_failure(
-            abort_code = E_NOT_PENDING_ADMIN, location = movekit::access_control_core
-        )
-    ]
-    fun test_accept_pending_admin_wrong_address(
-        admin: &signer, new_admin: &signer, wrong_admin: &signer
-    ) {
-        // Setup
-        access_control_core::init_for_testing(admin);
-        let new_admin_addr = signer::address_of(new_admin);
-
-        // Propose transfer to new_admin
-        access_control_core::transfer_admin(admin, new_admin_addr);
-
-        // Should fail - wrong_admin tries to accept
-        access_control_core::accept_pending_admin(wrong_admin);
     }
 
     #[test(non_admin = @0x123)]
@@ -266,20 +270,187 @@ module movekit::access_control_core_tests {
     }
 
     // ===========================================
-    // ROLE MANAGEMENT TESTS (Updated for new admin pattern)
+    // SECURITY ATTACK PREVENTION TESTS
+    // ===========================================
+
+    #[test(attacker = @0x999)]
+    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    fun test_privilege_escalation_prevention_grant(attacker: &signer) {
+        // Attacker tries to grant themselves admin role without proper authority
+        access_control_core::grant_role<Admin>(attacker, signer::address_of(attacker));
+    }
+
+    #[test(attacker = @0x999)]
+    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    fun test_privilege_escalation_prevention_transfer(attacker: &signer) {
+        // Attacker tries to transfer admin to themselves
+        access_control_core::transfer_admin(attacker, signer::address_of(attacker));
+    }
+
+    #[test(admin = @movekit, attacker = @0x999)]
+    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    fun test_unauthorized_role_grant_prevention(
+        admin: &signer, attacker: &signer
+    ) {
+        access_control_core::init_for_testing(admin);
+
+        // Attacker tries to grant roles to others
+        access_control_core::grant_role<Treasurer>(attacker, @0x123);
+    }
+
+    #[test(admin = @movekit, attacker = @0x999)]
+    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    fun test_unauthorized_role_revoke_prevention(
+        admin: &signer, attacker: &signer
+    ) {
+        access_control_core::init_for_testing(admin);
+
+        // Grant role to someone
+        access_control_core::grant_role<Treasurer>(admin, @0x123);
+
+        // Attacker tries to revoke roles from others
+        access_control_core::revoke_role<Treasurer>(attacker, @0x123);
+    }
+
+    #[test(admin = @movekit, attacker = @0x999)]
+    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    fun test_unauthorized_admin_cancel_prevention(
+        admin: &signer, attacker: &signer
+    ) {
+        access_control_core::init_for_testing(admin);
+
+        // Admin proposes transfer
+        access_control_core::transfer_admin(admin, @0x123);
+
+        // Attacker tries to cancel admin transfer
+        access_control_core::cancel_admin_transfer(attacker);
+    }
+
+    // ===========================================
+    // STATE CONSISTENCY TESTS
+    // ===========================================
+
+    #[test(admin = @movekit)]
+    fun test_role_registry_admin_sync(admin: &signer) {
+        access_control_core::init_for_testing(admin);
+
+        let admin_addr = signer::address_of(admin);
+
+        // Verify AdminRegistry and RoleRegistry are in sync
+        assert!(access_control_core::get_current_admin() == admin_addr, 0);
+        assert!(access_control_core::has_role<Admin>(admin_addr), 1);
+        assert!(access_control_core::is_current_admin(admin_addr), 2);
+
+        // Test consistency after granting other roles
+        access_control_core::grant_role<Treasurer>(admin, admin_addr);
+
+        // Admin should still be admin
+        assert!(access_control_core::get_current_admin() == admin_addr, 3);
+        assert!(access_control_core::has_role<Admin>(admin_addr), 4);
+        assert!(access_control_core::has_role<Treasurer>(admin_addr), 5);
+        assert!(access_control_core::get_role_count(admin_addr) == 2, 6);
+    }
+
+    #[test(admin = @movekit, new_admin = @0x123)]
+    fun test_admin_transfer_maintains_role_consistency(
+        admin: &signer, new_admin: &signer
+    ) {
+        access_control_core::init_for_testing(admin);
+
+        let admin_addr = signer::address_of(admin);
+        let new_admin_addr = signer::address_of(new_admin);
+
+        // Grant admin some additional roles
+        access_control_core::grant_role<Treasurer>(admin, admin_addr);
+        access_control_core::grant_role<Manager>(admin, admin_addr);
+
+        // Verify initial state
+        assert!(access_control_core::get_role_count(admin_addr) == 3, 0); // Admin + Treasurer + Manager
+        assert!(access_control_core::get_role_count(new_admin_addr) == 0, 1);
+
+        // Transfer admin role
+        access_control_core::transfer_admin(admin, new_admin_addr);
+        access_control_core::accept_pending_admin(new_admin);
+
+        // Verify role consistency after transfer
+        assert!(access_control_core::get_role_count(admin_addr) == 2, 2); // Treasurer + Manager (lost Admin)
+        assert!(access_control_core::get_role_count(new_admin_addr) == 1, 3); // Admin only
+
+        assert!(!access_control_core::has_role<Admin>(admin_addr), 4);
+        assert!(access_control_core::has_role<Admin>(new_admin_addr), 5);
+        assert!(access_control_core::has_role<Treasurer>(admin_addr), 6); // Should keep other roles
+        assert!(access_control_core::has_role<Manager>(admin_addr), 7);
+    }
+
+    #[test(admin = @movekit, new_admin = @0x123)]
+    fun test_admin_role_consistency_during_transfer(
+        admin: &signer, new_admin: &signer
+    ) {
+        // Test that admin role count remains exactly 1 throughout transfer
+        access_control_core::init_for_testing(admin);
+
+        let admin_addr = signer::address_of(admin);
+        let new_admin_addr = signer::address_of(new_admin);
+
+        // Initially: 1 admin role (in old admin)
+        assert!(access_control_core::has_role<Admin>(admin_addr), 0);
+        assert!(!access_control_core::has_role<Admin>(new_admin_addr), 1);
+
+        // Propose transfer - still 1 admin role
+        access_control_core::transfer_admin(admin, new_admin_addr);
+        assert!(access_control_core::has_role<Admin>(admin_addr), 2);
+        assert!(!access_control_core::has_role<Admin>(new_admin_addr), 3);
+
+        // Accept transfer - still 1 admin role (but transferred)
+        access_control_core::accept_pending_admin(new_admin);
+        assert!(!access_control_core::has_role<Admin>(admin_addr), 4);
+        assert!(access_control_core::has_role<Admin>(new_admin_addr), 5);
+
+        // AdminRegistry and RoleRegistry should be in sync
+        assert!(access_control_core::get_current_admin() == new_admin_addr, 6);
+        assert!(access_control_core::is_current_admin(new_admin_addr), 7);
+    }
+
+    // ===========================================
+    // USEFUL EDGE CASE TESTS
+    // ===========================================
+
+    #[test(admin = @movekit)]
+    fun test_role_operations_on_nonexistent_users(admin: &signer) {
+        access_control_core::init_for_testing(admin);
+
+        // Test granting roles to addresses that don't exist in table yet
+        let nonexistent = @0xDEADBEEF;
+
+        // Should be able to grant role to new address
+        access_control_core::grant_role<Treasurer>(admin, nonexistent);
+        assert!(access_control_core::has_role<Treasurer>(nonexistent), 0);
+        assert!(access_control_core::get_role_count(nonexistent) == 1, 1);
+
+        // Should be able to grant multiple roles
+        access_control_core::grant_role<Manager>(admin, nonexistent);
+        assert!(access_control_core::has_role<Manager>(nonexistent), 2);
+        assert!(access_control_core::get_role_count(nonexistent) == 2, 3);
+    }
+
+    // ===========================================
+    // REAL-WORLD ROLE MANAGEMENT TESTS
     // ===========================================
 
     #[test(admin = @movekit, user = @0x123)]
     fun test_grant_role_success(admin: &signer, user: &signer) {
-        // Setup: admin gets Admin role
         access_control_core::init_for_testing(admin);
 
         let user_addr = signer::address_of(user);
 
         // Test granting a role
         assert!(!access_control_core::has_role<Treasurer>(user_addr), 0);
-        access_control_core::grant_role<Treasurer>(admin, user);
-        assert!(access_control_core::has_role<Treasurer>(user_addr), 1);
+        assert!(access_control_core::get_role_count(user_addr) == 0, 1);
+
+        access_control_core::grant_role<Treasurer>(admin, user_addr);
+
+        assert!(access_control_core::has_role<Treasurer>(user_addr), 2);
+        assert!(access_control_core::get_role_count(user_addr) == 1, 3);
     }
 
     #[test(admin = @movekit, user = @0x123)]
@@ -289,33 +460,35 @@ module movekit::access_control_core_tests {
         )
     ]
     fun test_grant_role_already_has_role(admin: &signer, user: &signer) {
-        // Setup
         access_control_core::init_for_testing(admin);
-        access_control_core::grant_role<Treasurer>(admin, user);
+        let user_addr = signer::address_of(user);
+        access_control_core::grant_role<Treasurer>(admin, user_addr);
 
         // This should fail - user already has Treasurer role
-        access_control_core::grant_role<Treasurer>(admin, user);
+        access_control_core::grant_role<Treasurer>(admin, user_addr);
     }
 
-    #[test(non_admin = @0x123, user = @0x456)]
+    #[test(non_admin = @0x123)]
     #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
-    fun test_grant_role_not_admin(non_admin: &signer, user: &signer) {
+    fun test_grant_role_not_admin(non_admin: &signer) {
         // Test that non-admin cannot grant roles
-        access_control_core::grant_role<Treasurer>(non_admin, user);
+        access_control_core::grant_role<Treasurer>(non_admin, @0x456);
     }
 
     #[test(admin = @movekit, user = @0x123)]
     fun test_revoke_role_success(admin: &signer, user: &signer) {
-        // Setup
         access_control_core::init_for_testing(admin);
-        access_control_core::grant_role<Treasurer>(admin, user);
-
         let user_addr = signer::address_of(user);
+        access_control_core::grant_role<Treasurer>(admin, user_addr);
 
         // Test revoking a role
         assert!(access_control_core::has_role<Treasurer>(user_addr), 0);
+        assert!(access_control_core::get_role_count(user_addr) == 1, 1);
+
         access_control_core::revoke_role<Treasurer>(admin, user_addr);
-        assert!(!access_control_core::has_role<Treasurer>(user_addr), 1);
+
+        assert!(!access_control_core::has_role<Treasurer>(user_addr), 2);
+        assert!(access_control_core::get_role_count(user_addr) == 0, 3);
     }
 
     #[test(admin = @movekit, user = @0x123)]
@@ -323,84 +496,111 @@ module movekit::access_control_core_tests {
         abort_code = E_NO_SUCH_ROLE, location = movekit::access_control_core
     )]
     fun test_revoke_role_no_such_role(admin: &signer, user: &signer) {
-        // Setup
         access_control_core::init_for_testing(admin);
-
         let user_addr = signer::address_of(user);
 
         // This should fail - user doesn't have Treasurer role
         access_control_core::revoke_role<Treasurer>(admin, user_addr);
     }
 
-    #[test(non_admin = @0x123, user = @0x456)]
+    #[test(non_admin = @0x123)]
     #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
-    fun test_revoke_role_not_admin(non_admin: &signer, user: &signer) {
+    fun test_revoke_role_not_admin(non_admin: &signer) {
+        // Test that non-admin cannot revoke roles
+        access_control_core::revoke_role<Treasurer>(non_admin, @0x456);
+    }
+
+    // ===========================================
+    // GLOBAL REGISTRY TESTS
+    // ===========================================
+
+    #[test(admin = @movekit, user1 = @0x123, user2 = @0x456)]
+    fun test_multiple_roles_different_users(
+        admin: &signer, user1: &signer, user2: &signer
+    ) {
+        access_control_core::init_for_testing(admin);
+
+        let user1_addr = signer::address_of(user1);
+        let user2_addr = signer::address_of(user2);
+
+        // Grant different roles to different users
+        access_control_core::grant_role<Treasurer>(admin, user1_addr);
+        access_control_core::grant_role<Manager>(admin, user2_addr);
+
+        // Verify roles
+        assert!(access_control_core::has_role<Treasurer>(user1_addr), 0);
+        assert!(!access_control_core::has_role<Manager>(user1_addr), 1);
+        assert!(access_control_core::get_role_count(user1_addr) == 1, 2);
+
+        assert!(access_control_core::has_role<Manager>(user2_addr), 3);
+        assert!(!access_control_core::has_role<Treasurer>(user2_addr), 4);
+        assert!(access_control_core::get_role_count(user2_addr) == 1, 5);
+    }
+
+    #[test(admin = @movekit, user = @0x123)]
+    fun test_multiple_roles_same_user(admin: &signer, user: &signer) {
+        access_control_core::init_for_testing(admin);
+
         let user_addr = signer::address_of(user);
 
-        // Test that non-admin cannot revoke roles
-        access_control_core::revoke_role<Treasurer>(non_admin, user_addr);
+        // Grant multiple roles to same user
+        access_control_core::grant_role<Treasurer>(admin, user_addr);
+        access_control_core::grant_role<Manager>(admin, user_addr);
+        access_control_core::grant_role<Operator>(admin, user_addr);
+
+        // Verify all roles
+        assert!(access_control_core::has_role<Treasurer>(user_addr), 0);
+        assert!(access_control_core::has_role<Manager>(user_addr), 1);
+        assert!(access_control_core::has_role<Operator>(user_addr), 2);
+        assert!(access_control_core::get_role_count(user_addr) == 3, 3);
+
+        // Revoke one role, others should remain
+        access_control_core::revoke_role<Manager>(admin, user_addr);
+
+        assert!(access_control_core::has_role<Treasurer>(user_addr), 4);
+        assert!(!access_control_core::has_role<Manager>(user_addr), 5);
+        assert!(access_control_core::has_role<Operator>(user_addr), 6);
+        assert!(access_control_core::get_role_count(user_addr) == 2, 7);
     }
 
-    #[test(admin = @movekit, from_user = @0x123, to_user = @0x456)]
-    fun test_transfer_role_success(
-        admin: &signer, from_user: &signer, to_user: &signer
-    ) {
-        // Setup
-        access_control_core::init_for_testing(admin);
-        access_control_core::grant_role<Manager>(admin, from_user);
-
-        let from_addr = signer::address_of(from_user);
-        let to_addr = signer::address_of(to_user);
-
-        // Test transferring a role
-        assert!(access_control_core::has_role<Manager>(from_addr), 0);
-        assert!(!access_control_core::has_role<Manager>(to_addr), 1);
-
-        access_control_core::transfer_role<Manager>(admin, from_user, to_user);
-
-        assert!(!access_control_core::has_role<Manager>(from_addr), 2);
-        assert!(access_control_core::has_role<Manager>(to_addr), 3);
-    }
-
-    #[test(admin = @movekit, from_user = @0x123, to_user = @0x456)]
-    #[expected_failure(
-        abort_code = E_NO_SUCH_ROLE, location = movekit::access_control_core
-    )]
-    fun test_transfer_role_from_no_role(
-        admin: &signer, from_user: &signer, to_user: &signer
-    ) {
-        // Setup
+    #[test(admin = @movekit, user = @0x123)]
+    fun test_get_roles_function(admin: &signer, user: &signer) {
         access_control_core::init_for_testing(admin);
 
-        // This should fail - from_user doesn't have Manager role
-        access_control_core::transfer_role<Manager>(admin, from_user, to_user);
+        let user_addr = signer::address_of(user);
+
+        // Initially no roles
+        let roles = access_control_core::get_roles(user_addr);
+        assert!(vector::length(&roles) == 0, 0);
+
+        // Grant some roles
+        access_control_core::grant_role<Treasurer>(admin, user_addr);
+        access_control_core::grant_role<Manager>(admin, user_addr);
+
+        // Check roles vector
+        let roles = access_control_core::get_roles(user_addr);
+        assert!(vector::length(&roles) == 2, 1);
+
+        // Revoke one role
+        access_control_core::revoke_role<Treasurer>(admin, user_addr);
+
+        let roles = access_control_core::get_roles(user_addr);
+        assert!(vector::length(&roles) == 1, 2);
     }
 
-    #[test(admin = @movekit, from_user = @0x123, to_user = @0x456)]
-    #[
-        expected_failure(
-            abort_code = E_ALREADY_HAS_ROLE, location = movekit::access_control_core
-        )
-    ]
-    fun test_transfer_role_to_already_has_role(
-        admin: &signer, from_user: &signer, to_user: &signer
-    ) {
-        // Setup
-        access_control_core::init_for_testing(admin);
-        access_control_core::grant_role<Manager>(admin, from_user);
-        access_control_core::grant_role<Manager>(admin, to_user);
-
-        // This should fail - to_user already has Manager role
-        access_control_core::transfer_role<Manager>(admin, from_user, to_user);
+    #[test(user = @0x123)]
+    fun test_has_role_no_role(user: &signer) {
+        let user_addr = signer::address_of(user);
+        assert!(!access_control_core::has_role<Treasurer>(user_addr), 0);
+        assert!(!access_control_core::has_role<Admin>(user_addr), 1);
+        assert!(access_control_core::get_role_count(user_addr) == 0, 2);
     }
 
-    #[test(non_admin = @0x123, from_user = @0x456, to_user = @0x789)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
-    fun test_transfer_role_not_admin(
-        non_admin: &signer, from_user: &signer, to_user: &signer
-    ) {
-        // Test that non-admin cannot transfer roles
-        access_control_core::transfer_role<Manager>(non_admin, from_user, to_user);
+    #[test]
+    fun test_get_roles_no_registry() {
+        let roles = access_control_core::get_roles(@0x123);
+        assert!(vector::length(&roles) == 0, 0);
+        assert!(access_control_core::get_role_count(@0x123) == 0, 1);
     }
 
     // ===========================================
@@ -411,7 +611,6 @@ module movekit::access_control_core_tests {
     fun test_admin_transfer_chain(
         admin: &signer, admin2: &signer, admin3: &signer
     ) {
-        // Test transferring admin through a chain
         access_control_core::init_for_testing(admin);
 
         let admin_addr = signer::address_of(admin);
@@ -439,9 +638,9 @@ module movekit::access_control_core_tests {
     fun test_new_admin_can_manage_roles(
         admin: &signer, new_admin: &signer
     ) {
-        // Test that new admin can manage roles after transfer
         access_control_core::init_for_testing(admin);
 
+        let admin_addr = signer::address_of(admin);
         let new_admin_addr = signer::address_of(new_admin);
 
         // Transfer admin
@@ -449,20 +648,12 @@ module movekit::access_control_core_tests {
         access_control_core::accept_pending_admin(new_admin);
 
         // New admin should be able to grant roles
-        access_control_core::grant_role<Treasurer>(new_admin, admin);
-        assert!(
-            access_control_core::has_role<Treasurer>(signer::address_of(admin)),
-            0
-        );
+        access_control_core::grant_role<Treasurer>(new_admin, admin_addr);
+        assert!(access_control_core::has_role<Treasurer>(admin_addr), 0);
 
         // And revoke roles
-        access_control_core::revoke_role<Treasurer>(
-            new_admin, signer::address_of(admin)
-        );
-        assert!(
-            !access_control_core::has_role<Treasurer>(signer::address_of(admin)),
-            1
-        );
+        access_control_core::revoke_role<Treasurer>(new_admin, admin_addr);
+        assert!(!access_control_core::has_role<Treasurer>(admin_addr), 1);
     }
 
     // ===========================================
@@ -472,7 +663,8 @@ module movekit::access_control_core_tests {
     #[test(admin = @movekit, user = @0x123)]
     fun test_require_role_success(admin: &signer, user: &signer) {
         access_control_core::init_for_testing(admin);
-        access_control_core::grant_role<Treasurer>(admin, user);
+        let user_addr = signer::address_of(user);
+        access_control_core::grant_role<Treasurer>(admin, user_addr);
 
         // Should not abort
         access_control_core::require_role<Treasurer>(user);
@@ -487,62 +679,137 @@ module movekit::access_control_core_tests {
         access_control_core::require_role<Treasurer>(user);
     }
 
-    // ===========================================
-    // COMPLEX SCENARIO TESTS
-    // ===========================================
-
-    #[test(admin = @movekit, user1 = @0x123, user2 = @0x456)]
-    fun test_multiple_roles_different_users(
-        admin: &signer, user1: &signer, user2: &signer
-    ) {
-        // Test that different users can have different roles
+    #[test(admin = @movekit, user = @0x123)]
+    fun test_require_role_admin(admin: &signer, user: &signer) {
         access_control_core::init_for_testing(admin);
 
-        let user1_addr = signer::address_of(user1);
-        let user2_addr = signer::address_of(user2);
+        // Admin should have Admin role
+        access_control_core::require_role<Admin>(admin);
 
-        // Grant different roles to different users
-        access_control_core::grant_role<Treasurer>(admin, user1);
-        access_control_core::grant_role<Manager>(admin, user2);
-
-        // Verify roles
-        assert!(access_control_core::has_role<Treasurer>(user1_addr), 0);
-        assert!(!access_control_core::has_role<Manager>(user1_addr), 1);
-
-        assert!(access_control_core::has_role<Manager>(user2_addr), 2);
-        assert!(!access_control_core::has_role<Treasurer>(user2_addr), 3);
+        // User should not have Admin role
+        let user_addr = signer::address_of(user);
+        assert!(!access_control_core::has_role<Admin>(user_addr), 0);
     }
 
-    #[test(admin = @movekit, user = @0x123)]
-    fun test_multiple_roles_same_user(admin: &signer, user: &signer) {
-        // Test that same user can have multiple roles
+    // ===========================================
+    // EDGE CASES AND ERROR HANDLING
+    // ===========================================
+
+    #[test]
+    fun test_has_role_with_no_registry() {
+        // Test has_role when RoleRegistry doesn't exist
+        assert!(!access_control_core::has_role<Admin>(@0x123), 0);
+        assert!(!access_control_core::has_role<Treasurer>(@0x456), 1);
+    }
+
+    #[test(admin = @movekit)]
+    fun test_grant_revoke_same_role_multiple_times(admin: &signer) {
         access_control_core::init_for_testing(admin);
+        let target = @0x123;
 
-        let user_addr = signer::address_of(user);
+        // Grant, revoke, grant again
+        access_control_core::grant_role<Treasurer>(admin, target);
+        assert!(access_control_core::has_role<Treasurer>(target), 0);
 
-        // Grant multiple roles to same user
+        access_control_core::revoke_role<Treasurer>(admin, target);
+        assert!(!access_control_core::has_role<Treasurer>(target), 1);
+
+        access_control_core::grant_role<Treasurer>(admin, target);
+        assert!(access_control_core::has_role<Treasurer>(target), 2);
+    }
+
+    #[test(admin = @movekit)]
+    fun test_large_number_of_roles(admin: &signer) {
+        access_control_core::init_for_testing(admin);
+        let user = @0x123;
+
+        // Grant multiple different role types to same user
         access_control_core::grant_role<Treasurer>(admin, user);
         access_control_core::grant_role<Manager>(admin, user);
         access_control_core::grant_role<Operator>(admin, user);
+        access_control_core::grant_role<Admin>(admin, user);
 
-        // Verify all roles
-        assert!(access_control_core::has_role<Treasurer>(user_addr), 0);
-        assert!(access_control_core::has_role<Manager>(user_addr), 1);
-        assert!(access_control_core::has_role<Operator>(user_addr), 2);
-
-        // Revoke one role, others should remain
-        access_control_core::revoke_role<Manager>(admin, user_addr);
-
-        assert!(access_control_core::has_role<Treasurer>(user_addr), 3);
-        assert!(!access_control_core::has_role<Manager>(user_addr), 4);
-        assert!(access_control_core::has_role<Operator>(user_addr), 5);
+        // Verify all roles exist
+        assert!(access_control_core::has_role<Treasurer>(user), 0);
+        assert!(access_control_core::has_role<Manager>(user), 1);
+        assert!(access_control_core::has_role<Operator>(user), 2);
+        assert!(access_control_core::has_role<Admin>(user), 3);
+        assert!(access_control_core::get_role_count(user) == 4, 4);
     }
 
-    #[test(user = @0x123)]
-    fun test_has_role_no_role(user: &signer) {
-        // Test has_role returns false for non-existent role
-        let user_addr = signer::address_of(user);
-        assert!(!access_control_core::has_role<Treasurer>(user_addr), 0);
-        assert!(!access_control_core::has_role<Admin>(user_addr), 1);
+    #[test(admin = @movekit, new_admin = @0x123)]
+    #[
+        expected_failure(
+            abort_code = E_NO_PENDING_ADMIN, location = movekit::access_control_core
+        )
+    ]
+    fun test_double_accept_pending_admin_fails(
+        admin: &signer, new_admin: &signer
+    ) {
+        // Normal transfer
+        access_control_core::init_for_testing(admin);
+        let new_admin_addr = signer::address_of(new_admin);
+        access_control_core::transfer_admin(admin, new_admin_addr);
+
+        // First accept succeeds
+        access_control_core::accept_pending_admin(new_admin);
+        // Second accept must fail → E_NO_PENDING_ADMIN
+        access_control_core::accept_pending_admin(new_admin);
+    }
+
+    #[test(admin = @movekit)]
+    #[
+        expected_failure(
+            abort_code = E_ALREADY_HAS_ROLE, location = movekit::access_control_core
+        )
+    ]
+    fun test_admin_cannot_grant_admin_twice(admin: &signer) {
+        // Bootstrap
+        access_control_core::init_for_testing(admin);
+        let admin_addr = signer::address_of(admin);
+
+        // Current admin **already** owns the Admin role; trying again must abort
+        access_control_core::grant_role<Admin>(admin, admin_addr);
+    }
+
+    #[test(current_admin = @movekit, future_admin = @0x123)]
+    fun test_admin_role_not_duplicated_after_transfer(
+        current_admin: &signer, future_admin: &signer
+    ) {
+        access_control_core::init_for_testing(current_admin);
+
+        let fut_addr = signer::address_of(future_admin);
+
+        // Pre-grant Admin to the future admin
+        access_control_core::grant_role<Admin>(current_admin, fut_addr);
+        assert!(access_control_core::get_role_count(fut_addr) == 1, 0);
+
+        // Transfer governance
+        access_control_core::transfer_admin(current_admin, fut_addr);
+        access_control_core::accept_pending_admin(future_admin);
+
+        assert!(access_control_core::get_role_count(fut_addr) == 1, 1);
+    }
+
+    #[test(current_admin = @movekit, future_admin = @0x123)]
+    fun test_single_revoke_clears_admin_role(
+        current_admin: &signer, future_admin: &signer
+    ) {
+        // Setup identical to duplication test, except duplicates can’t occur.
+        access_control_core::init_for_testing(current_admin);
+        let fut_addr = signer::address_of(future_admin);
+
+        // Pre-grant Admin, then transfer governance.
+        access_control_core::grant_role<Admin>(current_admin, fut_addr);
+        access_control_core::transfer_admin(current_admin, fut_addr);
+        access_control_core::accept_pending_admin(future_admin);
+
+        assert!(access_control_core::get_role_count(fut_addr) == 1, 0);
+
+        // Revoke once.
+        access_control_core::revoke_role<Admin>(future_admin, fut_addr);
+
+        assert!(!access_control_core::has_role<Admin>(fut_addr), 1);
+        assert!(access_control_core::get_role_count(fut_addr) == 0, 2);
     }
 }
