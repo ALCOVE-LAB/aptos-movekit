@@ -235,9 +235,7 @@ module movekit::access_control_core {
         );
         move_to<Role<Admin>>(admin, Role<Admin> {});
 
-        event::emit(
-            RoleGrantedEvent<Admin> { admin: admin_addr, target: admin_addr }
-        );
+        event::emit(RoleGrantedEvent<Admin> { admin: admin_addr, target: admin_addr });
     }
 
     /// Grants a role to an address

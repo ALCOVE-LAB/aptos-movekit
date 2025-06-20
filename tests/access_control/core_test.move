@@ -46,9 +46,11 @@ module movekit::access_control_core_tests {
     }
 
     #[test]
-    #[expected_failure(
-        abort_code = E_NOT_INITIALIZED, location = movekit::access_control_core
-    )]
+    #[
+        expected_failure(
+            abort_code = E_NOT_INITIALIZED, location = movekit::access_control_core
+        )
+    ]
     fun test_get_current_admin_fails_when_not_initialized() {
         // Should fail - no admin registry exists
         access_control_core::get_current_admin();
@@ -186,9 +188,11 @@ module movekit::access_control_core_tests {
     }
 
     #[test(new_admin = @0x123)]
-    #[expected_failure(
-        abort_code = E_NOT_INITIALIZED, location = movekit::access_control_core
-    )]
+    #[
+        expected_failure(
+            abort_code = E_NOT_INITIALIZED, location = movekit::access_control_core
+        )
+    ]
     fun test_accept_pending_admin_no_pending(new_admin: &signer) {
         // Should fail - admin registry not initialized (fails before checking pending admin)
         access_control_core::accept_pending_admin(new_admin);
