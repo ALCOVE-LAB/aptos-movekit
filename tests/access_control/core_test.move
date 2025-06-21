@@ -11,30 +11,35 @@ module movekit::access_control_core_tests {
 
     struct Operator has copy, drop {}
 
-    // Test constants
+    // Core module error codes
     const E_NOT_ADMIN: u64 = 0;
     const E_ALREADY_HAS_ROLE: u64 = 1;
     const E_NO_SUCH_ROLE: u64 = 2;
-    const E_NO_PENDING_ADMIN: u64 = 3;
-    const E_NOT_PENDING_ADMIN: u64 = 4;
-    const E_NOT_INITIALIZED: u64 = 5;
-    const E_SELF_TRANSFER_NOT_ALLOWED: u64 = 6;
+    const E_NOT_INITIALIZED: u64 = 3;
+    const E_ADMIN_ROLE_PROTECTED: u64 = 4;
+
+    // Admin registry error codes (for delegated functions)
+    const E_ADMIN_NOT_INITIALIZED: u64 = 0;
+    const E_ADMIN_NOT_ADMIN: u64 = 1;
+    const E_ADMIN_SELF_TRANSFER_NOT_ALLOWED: u64 = 2;
+    const E_ADMIN_NO_PENDING_ADMIN: u64 = 3;
+    const E_ADMIN_NOT_PENDING_ADMIN: u64 = 4;
 
     // ===========================================
     // INITIALIZATION & ADMIN REGISTRY TESTS
     // ===========================================
 
     #[test(deployer = @movekit)]
-    fun test_init_module_creates_admin_registry(deployer: &signer) {
+    fun test_init_module_creates_registries(deployer: &signer) {
         access_control_core::init_for_testing(deployer);
 
         let deployer_addr = signer::address_of(deployer);
 
-        // Check admin registry was created
+        // Check admin registry was created (delegated functions work)
         assert!(access_control_core::get_current_admin() == deployer_addr, 0);
         assert!(access_control_core::is_current_admin(deployer_addr), 1);
 
-        // Check admin role was granted in global registry
+        // Check admin role was granted in role registry
         assert!(access_control_core::has_role<Admin>(deployer_addr), 2);
 
         // Check role count
@@ -42,28 +47,39 @@ module movekit::access_control_core_tests {
     }
 
     #[test(deployer = @movekit)]
-    #[expected_failure]
-    fun test_init_module_fails_if_already_initialized(deployer: &signer) {
+    fun test_init_module_idempotent_on_double_call(deployer: &signer) {
         access_control_core::init_for_testing(deployer);
-        // This should fail with RESOURCE_ALREADY_EXISTS when trying to move_to AdminRegistry again
+        // Second initialization should be idempotent (no failure)
         access_control_core::init_for_testing(deployer);
+
+        // Should still work correctly
+        let deployer_addr = signer::address_of(deployer);
+        assert!(access_control_core::get_current_admin() == deployer_addr, 0);
+        assert!(access_control_core::has_role<Admin>(deployer_addr), 1);
     }
 
     #[test]
     #[
         expected_failure(
-            abort_code = E_NOT_INITIALIZED, location = movekit::access_control_core
+            abort_code = E_ADMIN_NOT_INITIALIZED,
+            location = movekit::access_control_admin_registry
         )
     ]
     fun test_get_current_admin_fails_when_not_initialized() {
-        // Should fail - no admin registry exists
+        // Should fail - no admin registry exists (error comes from admin registry)
         access_control_core::get_current_admin();
     }
 
     #[test]
-    fun test_is_current_admin_returns_false_when_not_initialized() {
-        // Should return false gracefully when not initialized
-        assert!(!access_control_core::is_current_admin(@0x123), 0);
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_NOT_INITIALIZED,
+            location = movekit::access_control_admin_registry
+        )
+    ]
+    fun test_is_current_admin_fails_when_not_initialized() {
+        // Should fail when not initialized (since core delegates to admin registry)
+        access_control_core::is_current_admin(@0x123);
     }
 
     #[test(deployer = @movekit)]
@@ -73,10 +89,8 @@ module movekit::access_control_core_tests {
         let deployer_addr = signer::address_of(deployer);
         let other_addr = @0x123;
 
-        // Test get_current_admin
+        // Test delegated admin functions
         assert!(access_control_core::get_current_admin() == deployer_addr, 0);
-
-        // Test is_current_admin
         assert!(access_control_core::is_current_admin(deployer_addr), 1);
         assert!(!access_control_core::is_current_admin(other_addr), 2);
     }
@@ -89,25 +103,24 @@ module movekit::access_control_core_tests {
     fun test_transfer_admin_complete_flow(
         admin: &signer, new_admin: &signer
     ) {
-        // Setup
         access_control_core::init_for_testing(admin);
 
         let admin_addr = signer::address_of(admin);
         let new_admin_addr = signer::address_of(new_admin);
 
-        // Step 1: Propose transfer
+        // Step 1: Propose transfer (delegated to admin registry)
         access_control_core::transfer_admin(admin, new_admin_addr);
 
-        // Check pending state
+        // Check pending state (delegated functions)
         assert!(access_control_core::has_pending_admin(admin_addr), 0);
-        assert!(access_control_core::get_pending_admin(admin_addr) == new_admin_addr, 1);
+        assert!(access_control_core::get_pending_admin() == new_admin_addr, 1);
 
         // Admin should still be current
         assert!(access_control_core::get_current_admin() == admin_addr, 2);
         assert!(access_control_core::is_current_admin(admin_addr), 3);
         assert!(!access_control_core::is_current_admin(new_admin_addr), 4);
 
-        // Step 2: Accept transfer
+        // Step 2: Accept transfer (core coordinates admin registry + role management)
         access_control_core::accept_pending_admin(new_admin);
 
         // Check transfer completed
@@ -115,11 +128,11 @@ module movekit::access_control_core_tests {
         assert!(access_control_core::is_current_admin(new_admin_addr), 6);
         assert!(!access_control_core::is_current_admin(admin_addr), 7);
 
-        // Check roles transferred in global registry
+        // Check roles transferred in role registry
         assert!(access_control_core::has_role<Admin>(new_admin_addr), 8);
         assert!(!access_control_core::has_role<Admin>(admin_addr), 9);
 
-        // Check pending admin cleaned up
+        // Check pending admin cleaned up (delegated to admin registry)
         assert!(!access_control_core::has_pending_admin(admin_addr), 10);
     }
 
@@ -127,7 +140,6 @@ module movekit::access_control_core_tests {
     fun test_transfer_admin_cancel_flow(
         admin: &signer, new_admin: &signer
     ) {
-        // Setup
         access_control_core::init_for_testing(admin);
 
         let admin_addr = signer::address_of(admin);
@@ -137,7 +149,7 @@ module movekit::access_control_core_tests {
         access_control_core::transfer_admin(admin, new_admin_addr);
         assert!(access_control_core::has_pending_admin(admin_addr), 0);
 
-        // Cancel transfer
+        // Cancel transfer (delegated to admin registry)
         access_control_core::cancel_admin_transfer(admin);
 
         // Check admin unchanged
@@ -153,120 +165,125 @@ module movekit::access_control_core_tests {
     fun test_transfer_admin_multiple_proposals(
         admin: &signer, new_admin: &signer
     ) {
-        // Setup
         access_control_core::init_for_testing(admin);
 
-        let admin_addr = signer::address_of(admin);
         let new_admin_addr = signer::address_of(new_admin);
         let another_addr = @0x456;
 
         // First proposal
         access_control_core::transfer_admin(admin, new_admin_addr);
-        assert!(access_control_core::get_pending_admin(admin_addr) == new_admin_addr, 0);
+        assert!(access_control_core::get_pending_admin() == new_admin_addr, 0);
 
         // Second proposal overwrites first
         access_control_core::transfer_admin(admin, another_addr);
-        assert!(access_control_core::get_pending_admin(admin_addr) == another_addr, 1);
+        assert!(access_control_core::get_pending_admin() == another_addr, 1);
     }
 
     #[test(non_admin = @0x123)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_NOT_INITIALIZED,
+            location = movekit::access_control_admin_registry
+        )
+    ]
     fun test_transfer_admin_not_admin(non_admin: &signer) {
-        // Should fail - not admin
+        // Should fail - not admin (error from admin registry)
         access_control_core::transfer_admin(non_admin, @0x456);
     }
 
     #[test(admin = @movekit)]
     #[
         expected_failure(
-            abort_code = E_SELF_TRANSFER_NOT_ALLOWED,
-            location = movekit::access_control_core
+            abort_code = E_ADMIN_SELF_TRANSFER_NOT_ALLOWED,
+            location = movekit::access_control_admin_registry
         )
     ]
     fun test_transfer_admin_to_self(admin: &signer) {
         access_control_core::init_for_testing(admin);
         let admin_addr = signer::address_of(admin);
 
-        // Should fail - cannot transfer to self
+        // Should fail - cannot transfer to self (error from admin registry)
         access_control_core::transfer_admin(admin, admin_addr);
     }
 
     #[test(admin = @movekit, new_admin = @0x123, wrong_admin = @0x456)]
-    #[
-        expected_failure(
-            abort_code = E_NOT_PENDING_ADMIN, location = movekit::access_control_core
-        )
-    ]
+    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
     fun test_accept_pending_admin_wrong_address(
         admin: &signer, new_admin: &signer, wrong_admin: &signer
     ) {
-        // Setup
         access_control_core::init_for_testing(admin);
         let new_admin_addr = signer::address_of(new_admin);
 
         // Propose transfer to new_admin
         access_control_core::transfer_admin(admin, new_admin_addr);
 
-        // Should fail - wrong_admin tries to accept
+        // Should fail - wrong_admin tries to accept (core validates this)
         access_control_core::accept_pending_admin(wrong_admin);
     }
 
     #[test(new_admin = @0x123)]
     #[
         expected_failure(
-            abort_code = E_NOT_INITIALIZED, location = movekit::access_control_core
+            abort_code = E_ADMIN_NOT_INITIALIZED,
+            location = movekit::access_control_admin_registry
         )
     ]
     fun test_accept_pending_admin_no_pending(new_admin: &signer) {
-        // Should fail - admin registry not initialized (fails before checking pending admin)
+        // Should fail - admin registry not initialized (error from admin registry)
         access_control_core::accept_pending_admin(new_admin);
     }
 
     #[test(admin = @movekit, new_admin = @0x123)]
     #[
         expected_failure(
-            abort_code = E_NO_PENDING_ADMIN, location = movekit::access_control_core
+            abort_code = E_NOT_INITIALIZED, location = movekit::access_control_core
         )
     ]
     fun test_accept_pending_admin_no_pending_initialized(
         admin: &signer, new_admin: &signer
     ) {
-        // Setup admin but no pending transfer
         access_control_core::init_for_testing(admin);
 
-        // Should fail - no pending admin transfer (but admin registry is initialized)
+        // Should fail - no pending admin transfer (core validates this)
         access_control_core::accept_pending_admin(new_admin);
     }
 
     #[test(non_admin = @0x123)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_NOT_INITIALIZED,
+            location = movekit::access_control_admin_registry
+        )
+    ]
     fun test_cancel_admin_transfer_not_admin(non_admin: &signer) {
-        // Should fail - not admin
+        // Should fail - not admin (error from admin registry)
         access_control_core::cancel_admin_transfer(non_admin);
     }
 
     #[test(admin = @movekit)]
     #[
         expected_failure(
-            abort_code = E_NO_PENDING_ADMIN, location = movekit::access_control_core
+            abort_code = E_ADMIN_NO_PENDING_ADMIN,
+            location = movekit::access_control_admin_registry
         )
     ]
     fun test_cancel_admin_transfer_no_pending(admin: &signer) {
         access_control_core::init_for_testing(admin);
 
-        // Should fail - no pending transfer to cancel
+        // Should fail - no pending transfer to cancel (error from admin registry)
         access_control_core::cancel_admin_transfer(admin);
     }
 
     #[test]
     #[
         expected_failure(
-            abort_code = E_NO_PENDING_ADMIN, location = movekit::access_control_core
+            abort_code = E_ADMIN_NOT_INITIALIZED,
+            location = movekit::access_control_admin_registry
         )
     ]
     fun test_get_pending_admin_no_pending() {
-        // Should fail - no pending admin
-        access_control_core::get_pending_admin(@0x123);
+        // Should fail - no pending admin (error from admin registry)
+        access_control_core::get_pending_admin();
     }
 
     // ===========================================
@@ -274,21 +291,35 @@ module movekit::access_control_core_tests {
     // ===========================================
 
     #[test(attacker = @0x999)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_ROLE_PROTECTED, location = movekit::access_control_core
+        )
+    ]
     fun test_privilege_escalation_prevention_grant(attacker: &signer) {
-        // Attacker tries to grant themselves admin role without proper authority
+        // Attacker tries to grant themselves admin role - blocked by role protection
         access_control_core::grant_role<Admin>(attacker, signer::address_of(attacker));
     }
 
     #[test(attacker = @0x999)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_NOT_INITIALIZED,
+            location = movekit::access_control_admin_registry
+        )
+    ]
     fun test_privilege_escalation_prevention_transfer(attacker: &signer) {
-        // Attacker tries to transfer admin to themselves
+        // Attacker tries to transfer admin to themselves (error from admin registry)
         access_control_core::transfer_admin(attacker, signer::address_of(attacker));
     }
 
     #[test(admin = @movekit, attacker = @0x999)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_NOT_ADMIN,
+            location = movekit::access_control_admin_registry
+        )
+    ]
     fun test_unauthorized_role_grant_prevention(
         admin: &signer, attacker: &signer
     ) {
@@ -299,7 +330,12 @@ module movekit::access_control_core_tests {
     }
 
     #[test(admin = @movekit, attacker = @0x999)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_NOT_ADMIN,
+            location = movekit::access_control_admin_registry
+        )
+    ]
     fun test_unauthorized_role_revoke_prevention(
         admin: &signer, attacker: &signer
     ) {
@@ -313,7 +349,12 @@ module movekit::access_control_core_tests {
     }
 
     #[test(admin = @movekit, attacker = @0x999)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_NOT_ADMIN,
+            location = movekit::access_control_admin_registry
+        )
+    ]
     fun test_unauthorized_admin_cancel_prevention(
         admin: &signer, attacker: &signer
     ) {
@@ -322,7 +363,7 @@ module movekit::access_control_core_tests {
         // Admin proposes transfer
         access_control_core::transfer_admin(admin, @0x123);
 
-        // Attacker tries to cancel admin transfer
+        // Attacker tries to cancel admin transfer (error from admin registry)
         access_control_core::cancel_admin_transfer(attacker);
     }
 
@@ -368,7 +409,7 @@ module movekit::access_control_core_tests {
         assert!(access_control_core::get_role_count(admin_addr) == 3, 0); // Admin + Treasurer + Manager
         assert!(access_control_core::get_role_count(new_admin_addr) == 0, 1);
 
-        // Transfer admin role
+        // Transfer admin role (core coordinates between admin registry and role registry)
         access_control_core::transfer_admin(admin, new_admin_addr);
         access_control_core::accept_pending_admin(new_admin);
 
@@ -412,14 +453,13 @@ module movekit::access_control_core_tests {
     }
 
     // ===========================================
-    // USEFUL EDGE CASE TESTS
+    // ROLE MANAGEMENT TESTS
     // ===========================================
 
     #[test(admin = @movekit)]
     fun test_role_operations_on_nonexistent_users(admin: &signer) {
         access_control_core::init_for_testing(admin);
 
-        // Test granting roles to addresses that don't exist in table yet
         let nonexistent = @0xDEADBEEF;
 
         // Should be able to grant role to new address
@@ -432,10 +472,6 @@ module movekit::access_control_core_tests {
         assert!(access_control_core::has_role<Manager>(nonexistent), 2);
         assert!(access_control_core::get_role_count(nonexistent) == 2, 3);
     }
-
-    // ===========================================
-    // REAL-WORLD ROLE MANAGEMENT TESTS
-    // ===========================================
 
     #[test(admin = @movekit, user = @0x123)]
     fun test_grant_role_success(admin: &signer, user: &signer) {
@@ -469,7 +505,12 @@ module movekit::access_control_core_tests {
     }
 
     #[test(non_admin = @0x123)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_NOT_INITIALIZED,
+            location = movekit::access_control_admin_registry
+        )
+    ]
     fun test_grant_role_not_admin(non_admin: &signer) {
         // Test that non-admin cannot grant roles
         access_control_core::grant_role<Treasurer>(non_admin, @0x456);
@@ -504,15 +545,16 @@ module movekit::access_control_core_tests {
     }
 
     #[test(non_admin = @0x123)]
-    #[expected_failure(abort_code = E_NOT_ADMIN, location = movekit::access_control_core)]
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_NOT_INITIALIZED,
+            location = movekit::access_control_admin_registry
+        )
+    ]
     fun test_revoke_role_not_admin(non_admin: &signer) {
         // Test that non-admin cannot revoke roles
         access_control_core::revoke_role<Treasurer>(non_admin, @0x456);
     }
-
-    // ===========================================
-    // GLOBAL REGISTRY TESTS
-    // ===========================================
 
     #[test(admin = @movekit, user1 = @0x123, user2 = @0x456)]
     fun test_multiple_roles_different_users(
@@ -727,89 +769,62 @@ module movekit::access_control_core_tests {
         access_control_core::grant_role<Treasurer>(admin, user);
         access_control_core::grant_role<Manager>(admin, user);
         access_control_core::grant_role<Operator>(admin, user);
-        access_control_core::grant_role<Admin>(admin, user);
+        // Note: Admin role is reserved for actual admins
 
         // Verify all roles exist
         assert!(access_control_core::has_role<Treasurer>(user), 0);
         assert!(access_control_core::has_role<Manager>(user), 1);
         assert!(access_control_core::has_role<Operator>(user), 2);
-        assert!(access_control_core::has_role<Admin>(user), 3);
-        assert!(access_control_core::get_role_count(user) == 4, 4);
+        assert!(access_control_core::get_role_count(user) == 3, 3);
     }
 
     #[test(admin = @movekit, new_admin = @0x123)]
     #[
         expected_failure(
-            abort_code = E_NO_PENDING_ADMIN, location = movekit::access_control_core
+            abort_code = E_NOT_INITIALIZED, location = movekit::access_control_core
         )
     ]
     fun test_double_accept_pending_admin_fails(
         admin: &signer, new_admin: &signer
     ) {
-        // Normal transfer
         access_control_core::init_for_testing(admin);
         let new_admin_addr = signer::address_of(new_admin);
         access_control_core::transfer_admin(admin, new_admin_addr);
 
         // First accept succeeds
         access_control_core::accept_pending_admin(new_admin);
-        // Second accept must fail → E_NO_PENDING_ADMIN
+        // Second accept must fail (core validates pending transfer exists)
         access_control_core::accept_pending_admin(new_admin);
     }
 
     #[test(admin = @movekit)]
     #[
         expected_failure(
-            abort_code = E_ALREADY_HAS_ROLE, location = movekit::access_control_core
+            abort_code = E_ADMIN_ROLE_PROTECTED, location = movekit::access_control_core
         )
     ]
     fun test_admin_cannot_grant_admin_twice(admin: &signer) {
-        // Bootstrap
         access_control_core::init_for_testing(admin);
         let admin_addr = signer::address_of(admin);
 
-        // Current admin **already** owns the Admin role; trying again must abort
+        // Admin role is protected - cannot be granted manually
         access_control_core::grant_role<Admin>(admin, admin_addr);
     }
 
     #[test(current_admin = @movekit, future_admin = @0x123)]
-    fun test_admin_role_not_duplicated_after_transfer(
+    #[
+        expected_failure(
+            abort_code = E_ADMIN_ROLE_PROTECTED, location = movekit::access_control_core
+        )
+    ]
+    fun test_admin_role_coordinated_during_transfer(
         current_admin: &signer, future_admin: &signer
     ) {
         access_control_core::init_for_testing(current_admin);
 
         let fut_addr = signer::address_of(future_admin);
 
-        // Pre-grant Admin to the future admin
+        // Cannot pre-grant Admin role - it's protected
         access_control_core::grant_role<Admin>(current_admin, fut_addr);
-        assert!(access_control_core::get_role_count(fut_addr) == 1, 0);
-
-        // Transfer governance
-        access_control_core::transfer_admin(current_admin, fut_addr);
-        access_control_core::accept_pending_admin(future_admin);
-
-        assert!(access_control_core::get_role_count(fut_addr) == 1, 1);
-    }
-
-    #[test(current_admin = @movekit, future_admin = @0x123)]
-    fun test_single_revoke_clears_admin_role(
-        current_admin: &signer, future_admin: &signer
-    ) {
-        // Setup identical to duplication test, except duplicates can’t occur.
-        access_control_core::init_for_testing(current_admin);
-        let fut_addr = signer::address_of(future_admin);
-
-        // Pre-grant Admin, then transfer governance.
-        access_control_core::grant_role<Admin>(current_admin, fut_addr);
-        access_control_core::transfer_admin(current_admin, fut_addr);
-        access_control_core::accept_pending_admin(future_admin);
-
-        assert!(access_control_core::get_role_count(fut_addr) == 1, 0);
-
-        // Revoke once.
-        access_control_core::revoke_role<Admin>(future_admin, fut_addr);
-
-        assert!(!access_control_core::has_role<Admin>(fut_addr), 1);
-        assert!(access_control_core::get_role_count(fut_addr) == 0, 2);
     }
 }

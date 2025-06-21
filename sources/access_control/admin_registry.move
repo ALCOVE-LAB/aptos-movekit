@@ -1,5 +1,4 @@
 module movekit::access_control_admin_registry {
-
     use std::signer;
     use std::event;
 
@@ -14,7 +13,6 @@ module movekit::access_control_admin_registry {
     }
 
     // -- Constants -- //
-
     const E_NOT_INITIALIZED: u64 = 0;
     const E_NOT_ADMIN: u64 = 1;
     const E_SELF_TRANSFER_NOT_ALLOWED: u64 = 2;
@@ -23,7 +21,6 @@ module movekit::access_control_admin_registry {
     const E_ALREADY_INITIALIZED: u64 = 5;
 
     // -- Events -- //
-
     #[event]
     struct AdminTransferProposed has copy, drop, store {
         current_admin: address,
@@ -138,6 +135,14 @@ module movekit::access_control_admin_registry {
         exists<PendingAdmin>(admin)
     }
 
+    /// Allow friend modules to initialize admin registry (idempotent)
+    public(friend) fun init_admin_registry(admin: &signer) {
+        if (!exists<AdminRegistry>(@movekit)) {
+            let admin_addr = signer::address_of(admin);
+            move_to(admin, AdminRegistry { current_admin: admin_addr });
+        }
+    }
+
     // -- Private Functions -- //
 
     fun init_module(admin: &signer) {
@@ -148,8 +153,6 @@ module movekit::access_control_admin_registry {
 
     #[test_only]
     public fun init_for_testing(admin: &signer) {
-        //let admin_addr = signer::address_of(admin);
-        //move_to(admin, AdminRegistry { current_admin: admin_addr });
         init_module(admin);
     }
 }

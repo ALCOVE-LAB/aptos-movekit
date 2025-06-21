@@ -1,203 +1,193 @@
 module movekit::access_control_core {
 
-    // -- Std & Framework Helpers -- //
+    // -- Dependencies -- //
 
     use std::signer;
     use std::event;
     use std::type_info::{Self, TypeInfo};
     use aptos_std::table::{Self, Table};
     use std::vector;
+    use movekit::access_control_admin_registry;
 
-    // -- Types Section -- //
+    // -- Core Types -- //
 
-    /// Global role registry - stores all roles for all addresses
+    /// Global role registry mapping addresses to role types
     struct RoleRegistry has key {
-        roles: Table<address, vector<TypeInfo>> // address -> list of role types they have
+        /// Maps addresses to their assigned role types
+        roles: Table<address, vector<TypeInfo>>
     }
 
-    /// Global admin registry - stores current admin address
-    struct AdminRegistry has key {
-        current_admin: address
-    }
-
-    /// Stores pending admin transfer
-    struct PendingAdmin has key, drop {
-        pending_admin: address
-    }
-
-    /// Built-in admin tag
+    /// Built-in Admin role type (managed via transfer only)
     struct Admin has copy, drop {}
 
-    // -- Constants Section -- //
+    // -- Error Codes -- //
 
-    /// Error codes
+    /// Unauthorized access attempt - caller lacks required permissions
     const E_NOT_ADMIN: u64 = 0;
+    /// Role already assigned to target address
     const E_ALREADY_HAS_ROLE: u64 = 1;
+    /// Attempted to revoke non-existent role
     const E_NO_SUCH_ROLE: u64 = 2;
-    const E_NO_PENDING_ADMIN: u64 = 3;
-    const E_NOT_PENDING_ADMIN: u64 = 4;
-    const E_NOT_INITIALIZED: u64 = 5;
-    const E_SELF_TRANSFER_NOT_ALLOWED: u64 = 6;
+    /// Attempted operation on uninitialized system
+    const E_NOT_INITIALIZED: u64 = 3;
+    /// Admin role cannot be manually managed - use admin transfer instead
+    const E_ADMIN_ROLE_PROTECTED: u64 = 4;
+    /// State corruption detected between admin registry and role registry
+    const E_STATE_CORRUPTION: u64 = 5;
 
-    // -- Events Section -- //
+    // -- Events -- //
 
     #[event]
+    /// Emitted when a role is successfully granted to an address
     struct RoleGrantedEvent<phantom T> has copy, drop, store {
+        /// Address of admin who granted the role
         admin: address,
+        /// Address that received the role
         target: address
     }
 
     #[event]
+    /// Emitted when a role is successfully revoked from an address
     struct RoleRevokedEvent<phantom T> has copy, drop, store {
+        /// Address of admin who revoked the role
         admin: address,
+        /// Address that lost the role
         target: address
     }
 
     #[event]
-    struct AdminTransferProposed has copy, drop, store {
-        current_admin: address,
-        pending_admin: address
-    }
-
-    #[event]
-    struct AdminTransferCompleted has copy, drop, store {
+    /// Emitted when admin role synchronization occurs during transfer
+    struct AdminRoleSynchronized has copy, drop, store {
+        /// Previous admin who lost Admin role
         old_admin: address,
+        /// New admin who gained Admin role
         new_admin: address
     }
 
-    #[event]
-    struct AdminTransferCanceled has copy, drop, store {
-        admin: address,
-        canceled_pending: address
-    }
+    // -- Public Interface -- //
 
-    // -- External Functions Section -- //
+    // === Admin Delegation Functions ===
 
     #[view]
-    /// Get current admin address
-    public fun get_current_admin(): address acquires AdminRegistry {
-        assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
-        borrow_global<AdminRegistry>(@movekit).current_admin
+    /// Get current admin address from admin registry
+    public fun get_current_admin(): address {
+        access_control_admin_registry::get_current_admin()
     }
 
     #[view]
-    /// Check if address is current admin
-    public fun is_current_admin(addr: address): bool acquires AdminRegistry {
-        if (!exists<AdminRegistry>(@movekit)) return false;
-        let registry = borrow_global<AdminRegistry>(@movekit);
-        registry.current_admin == addr
+    /// Check if given address is the current admin
+    public fun is_current_admin(addr: address): bool {
+        access_control_admin_registry::is_current_admin(addr)
     }
 
-    // -- Admin Transfer Functions --
-
-    /// Current admin proposes new admin
-    public fun transfer_admin(admin: &signer, new_admin: address) acquires AdminRegistry, PendingAdmin {
-        let admin_addr = signer::address_of(admin);
-        assert!(is_current_admin(admin_addr), E_NOT_ADMIN);
-        assert!(new_admin != admin_addr, E_SELF_TRANSFER_NOT_ALLOWED);
-
-        // Set or update pending admin
-        if (exists<PendingAdmin>(admin_addr)) {
-            let pending = borrow_global_mut<PendingAdmin>(admin_addr);
-            pending.pending_admin = new_admin;
-        } else {
-            move_to(admin, PendingAdmin { pending_admin: new_admin });
-        };
-
-        event::emit(
-            AdminTransferProposed { current_admin: admin_addr, pending_admin: new_admin }
-        );
+    /// Propose admin transfer - delegates to admin registry
+    public fun transfer_admin(admin: &signer, new_admin: address) {
+        access_control_admin_registry::transfer_admin(admin, new_admin)
     }
 
-    /// New admin accepts the transfer
-    public fun accept_pending_admin(
-        new_admin: &signer
-    ) acquires PendingAdmin, AdminRegistry, RoleRegistry {
+    /// Accept pending admin transfer and synchronize role assignments
+    public fun accept_pending_admin(new_admin: &signer) acquires RoleRegistry {
         let new_admin_addr = signer::address_of(new_admin);
-        let current_admin = get_current_admin();
 
-        assert!(exists<PendingAdmin>(current_admin), E_NO_PENDING_ADMIN);
-        let pending = borrow_global<PendingAdmin>(current_admin);
-        assert!(pending.pending_admin == new_admin_addr, E_NOT_PENDING_ADMIN);
+        // Capture current state before any modifications
+        let current_admin_addr = access_control_admin_registry::get_current_admin();
 
-        // Transfer the admin role in registry
-        grant_role_internal<Admin>(new_admin_addr);
-        // Grant first then revoke
-        revoke_role_internal<Admin>(current_admin);
-
-        // Update admin registry
-        let registry = borrow_global_mut<AdminRegistry>(@movekit);
-        registry.current_admin = new_admin_addr;
-
-        // Clean up pending admin
-        move_from<PendingAdmin>(current_admin);
-
-        event::emit(
-            AdminTransferCompleted { old_admin: current_admin, new_admin: new_admin_addr }
+        // Validate pending transfer exists and matches caller
+        assert!(
+            access_control_admin_registry::has_pending_admin(current_admin_addr),
+            E_NOT_INITIALIZED
         );
-    }
+        assert!(
+            access_control_admin_registry::get_pending_admin() == new_admin_addr,
+            E_NOT_ADMIN
+        );
 
-    /// Cancel pending admin transfer
-    public fun cancel_admin_transfer(admin: &signer) acquires AdminRegistry, PendingAdmin {
-        let admin_addr = signer::address_of(admin);
-        assert!(is_current_admin(admin_addr), E_NOT_ADMIN);
-        assert!(exists<PendingAdmin>(admin_addr), E_NO_PENDING_ADMIN);
+        // Execute admin transfer atomically
+        access_control_admin_registry::accept_pending_admin(new_admin);
 
-        let pending = move_from<PendingAdmin>(admin_addr);
+        // Synchronize Admin role assignments to maintain consistency
+        synchronize_admin_role(current_admin_addr, new_admin_addr);
 
+        // Emit synchronization event for audit trail
         event::emit(
-            AdminTransferCanceled {
-                admin: admin_addr,
-                canceled_pending: pending.pending_admin
+            AdminRoleSynchronized {
+                old_admin: current_admin_addr,
+                new_admin: new_admin_addr
             }
         );
     }
 
-    #[view]
-    /// Get pending admin address
-    public fun get_pending_admin(admin: address): address acquires PendingAdmin {
-        assert!(exists<PendingAdmin>(admin), E_NO_PENDING_ADMIN);
-        borrow_global<PendingAdmin>(admin).pending_admin
+    /// Cancel pending admin transfer - delegates to admin registry
+    public fun cancel_admin_transfer(admin: &signer) {
+        access_control_admin_registry::cancel_admin_transfer(admin)
     }
 
     #[view]
-    /// Check if there's a pending admin transfer
+    /// Get pending admin address from admin registry
+    public fun get_pending_admin(): address {
+        access_control_admin_registry::get_pending_admin()
+    }
+
+    #[view]
+    /// Check if admin has pending transfer
     public fun has_pending_admin(admin: address): bool {
-        exists<PendingAdmin>(admin)
+        access_control_admin_registry::has_pending_admin(admin)
     }
 
-    /// Admin grants role immediately
-    public fun grant_role<T>(admin: &signer, target: address) acquires AdminRegistry, RoleRegistry {
-        assert!(is_current_admin(signer::address_of(admin)), E_NOT_ADMIN);
+    // === Role Management Functions ===
+
+    /// Grant role to target address (Admin role; admin-only)
+    public fun grant_role<T>(admin: &signer, target: address) acquires RoleRegistry {
+        // Security: Prevent manual Admin role manipulation
+        assert_admin_role_not_protected<T>();
+
+        // Authorize admin access
+        require_admin(admin);
+
+        // Validate role assignment
         assert!(!has_role<T>(target), E_ALREADY_HAS_ROLE);
 
+        // Execute role grant
         grant_role_internal<T>(target);
 
+        // Emit audit event
         event::emit(
             RoleGrantedEvent<T> { admin: signer::address_of(admin), target: target }
         );
     }
 
-    /// Admin revokes role immediately (standard practice)
-    public fun revoke_role<T>(admin: &signer, target: address) acquires AdminRegistry, RoleRegistry {
-        assert!(is_current_admin(signer::address_of(admin)), E_NOT_ADMIN);
+    /// Revoke role from target address (Admin role; admin-only)
+    public fun revoke_role<T>(admin: &signer, target: address) acquires RoleRegistry {
+        // Security: Prevent manual Admin role manipulation
+        assert_admin_role_not_protected<T>();
+
+        // Authorize admin access
+        require_admin(admin);
+
+        // Validate role exists
         assert!(has_role<T>(target), E_NO_SUCH_ROLE);
 
+        // Execute role revocation
         revoke_role_internal<T>(target);
 
+        // Emit audit event
         event::emit(
             RoleRevokedEvent<T> { admin: signer::address_of(admin), target: target }
         );
     }
 
-    // -- View Functions --
+    // === View Functions ===
 
     #[view]
     /// Check if address has specific role
+    /// Returns false gracefully for uninitialized system or non-existent users
     public fun has_role<T>(addr: address): bool acquires RoleRegistry {
+        // Handle uninitialized system gracefully
         if (!exists<RoleRegistry>(@movekit)) return false;
 
         let registry = borrow_global<RoleRegistry>(@movekit);
+
+        // Handle non-existent user gracefully
         if (!table::contains(&registry.roles, addr))
             return false;
 
@@ -208,11 +198,15 @@ module movekit::access_control_core {
     }
 
     #[view]
-    /// Get all roles for an address
+    /// Get all roles assigned to an address
+    /// Returns empty vector for uninitialized system or non-existent users
     public fun get_roles(addr: address): vector<TypeInfo> acquires RoleRegistry {
+        // Handle uninitialized system gracefully
         if (!exists<RoleRegistry>(@movekit)) return vector::empty();
 
         let registry = borrow_global<RoleRegistry>(@movekit);
+
+        // Handle non-existent user gracefully
         if (!table::contains(&registry.roles, addr))
             return vector::empty();
 
@@ -220,12 +214,13 @@ module movekit::access_control_core {
     }
 
     #[view]
-    /// Count total roles for an address
+    /// Count total roles assigned to an address
     public fun get_role_count(addr: address): u64 acquires RoleRegistry {
         vector::length(&get_roles(addr))
     }
 
-    /// Utility function - assert account has role or abort
+    /// Assert caller has required role or abort with clear error
+    /// Useful for other modules requiring specific role authorization
     public fun require_role<T>(account: &signer) acquires RoleRegistry {
         assert!(
             has_role<T>(signer::address_of(account)),
@@ -233,47 +228,86 @@ module movekit::access_control_core {
         );
     }
 
-    // -- Internal Functions --
+    // -- Internal Implementation -- //
 
-    /// Internal function to grant role using global registry
+    /// Synchronize Admin role during admin transfer
+    /// Ensures exactly one Admin role exists and belongs to current admin
+    fun synchronize_admin_role(old_admin: address, new_admin: address) acquires RoleRegistry {
+        // Validate registry is initialized
+        assert!(exists<RoleRegistry>(@movekit), E_NOT_INITIALIZED);
+
+        // Grant Admin role to new admin (safe - handles duplicates)
+        grant_role_internal<Admin>(new_admin);
+
+        // Revoke Admin role from old admin (safe - handles non-existence)
+        revoke_role_internal<Admin>(old_admin);
+
+        // Verify state consistency after synchronization
+        assert!(has_role<Admin>(new_admin), E_STATE_CORRUPTION);
+        assert!(!has_role<Admin>(old_admin), E_STATE_CORRUPTION);
+    }
+
+    /// Internal role granting with duplicate protection
     fun grant_role_internal<T>(target: address) acquires RoleRegistry {
         let registry = borrow_global_mut<RoleRegistry>(@movekit);
         let role_type = type_info::type_of<T>();
 
+        // Initialize user's role vector if needed
         if (!table::contains(&registry.roles, target)) {
             table::add(&mut registry.roles, target, vector::empty<TypeInfo>());
         };
 
         let user_roles = table::borrow_mut(&mut registry.roles, target);
 
+        // Only add role if not already present (idempotent operation)
         if (!vector_contains(user_roles, &role_type)) {
             vector::push_back(user_roles, role_type);
         }
     }
 
-    /// Internal function to revoke role using global registry
+    /// Internal role revocation with non-existence protection
     fun revoke_role_internal<T>(target: address) acquires RoleRegistry {
         let registry = borrow_global_mut<RoleRegistry>(@movekit);
         let role_type = type_info::type_of<T>();
 
+        // Handle non-existent user gracefully
+        if (!table::contains(&registry.roles, target))
+            return;
+
         let user_roles = table::borrow_mut(&mut registry.roles, target);
         let (found, index) = vector_find(user_roles, &role_type);
-        assert!(found, E_NO_SUCH_ROLE);
 
-        vector::remove(user_roles, index);
+        // Only remove if role exists (idempotent operation)
+        if (found) {
+            vector::remove(user_roles, index);
 
-        if (vector::is_empty(user_roles)) {
-            table::remove(&mut registry.roles, target);
+            // Clean up empty role vectors to save storage
+            if (vector::is_empty(user_roles)) {
+                table::remove(&mut registry.roles, target);
+            }
         }
     }
 
-    /// Helper function to check if vector contains element
+    /// Require admin authorization with clear error messaging
+    fun require_admin(admin: &signer) {
+        access_control_admin_registry::require_admin(admin);
+    }
+
+    /// Security check: prevent manual Admin role manipulation
+    fun assert_admin_role_not_protected<T>() {
+        assert!(
+            type_info::type_of<T>() != type_info::type_of<Admin>(),
+            E_ADMIN_ROLE_PROTECTED
+        );
+    }
+
+    /// Check if vector contains specific element
     fun vector_contains(vec: &vector<TypeInfo>, item: &TypeInfo): bool {
         let (found, _) = vector_find(vec, item);
         found
     }
 
-    /// Helper function to find element in vector
+    /// Find element in vector with safe indexing
     fun vector_find(vec: &vector<TypeInfo>, item: &TypeInfo): (bool, u64) {
         let len = vector::length(vec);
         let i = 0;
@@ -283,33 +317,44 @@ module movekit::access_control_core {
             };
             i = i + 1;
         };
-        (false, 0)
+        (false, 0) // Return 0 as dummy index when not found
     }
 
-    /// Bootstrap: give the deployer the Admin role and create registries
+    /// System initialization - creates role registry and grants initial Admin role
     fun init_module(admin: &signer) acquires RoleRegistry {
         let admin_addr = signer::address_of(admin);
 
-        // Create admin registry
-        move_to(admin, AdminRegistry { current_admin: admin_addr });
+        // Initialize admin registry first (idempotent operation)
+        access_control_admin_registry::init_admin_registry(admin);
 
-        // Create global role registry
-        move_to(
-            admin,
-            RoleRegistry {
-                roles: table::new<address, vector<TypeInfo>>()
-            }
-        );
+        // Create role registry if not already exists
+        if (!exists<RoleRegistry>(@movekit)) {
+            move_to(
+                admin,
+                RoleRegistry {
+                    roles: table::new<address, vector<TypeInfo>>()
+                }
+            );
+        };
 
-        // Grant Admin role to deployer
+        // Grant initial Admin role to deployer
         grant_role_internal<Admin>(admin_addr);
 
+        // Emit initial role grant event
         event::emit(RoleGrantedEvent<Admin> { admin: admin_addr, target: admin_addr });
     }
 
-    // Public init function for testing only
+    // -- Testing Support -- //
+
     #[test_only]
+    /// Initialize system for testing purposes
     public fun init_for_testing(admin: &signer) acquires RoleRegistry {
         init_module(admin);
+    }
+
+    #[test_only]
+    /// Test-only function to verify Admin role protection
+    public fun test_admin_role_protection<T>(): bool {
+        type_info::type_of<T>() == type_info::type_of<Admin>()
     }
 }
