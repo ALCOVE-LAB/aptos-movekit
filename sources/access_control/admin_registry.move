@@ -3,8 +3,6 @@ module movekit::access_control_admin_registry {
     use std::event;
     use std::option::{Self, Option};
 
-    friend movekit::access_control_core;
-
     struct AdminRegistry has key {
         current_admin: address,
         pending_admin: Option<address>
@@ -37,27 +35,27 @@ module movekit::access_control_admin_registry {
         canceled_pending: address
     }
 
-    // -- Public Functions -- //
+    // -- Package Functions -- //
 
     #[view]
-    public fun get_current_admin(): address acquires AdminRegistry {
+    package fun get_current_admin(): address acquires AdminRegistry {
         assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
         (&AdminRegistry[@movekit]).current_admin
     }
 
     #[view]
-    public fun is_current_admin(addr: address): bool acquires AdminRegistry {
+    package fun is_current_admin(addr: address): bool acquires AdminRegistry {
         get_current_admin() == addr
     }
 
-    public fun require_admin(admin: &signer) acquires AdminRegistry {
+    package fun require_admin(admin: &signer) acquires AdminRegistry {
         assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
         let registry = &AdminRegistry[@movekit];
         assert!(registry.current_admin == signer::address_of(admin), E_NOT_ADMIN);
     }
 
     /// Current admin proposes new admin
-    public fun transfer_admin(admin: &signer, new_admin: address) acquires AdminRegistry {
+    package fun transfer_admin(admin: &signer, new_admin: address) acquires AdminRegistry {
         require_admin(admin);
         let admin_addr = signer::address_of(admin);
         assert!(new_admin != admin_addr, E_SELF_TRANSFER_NOT_ALLOWED);
@@ -72,7 +70,7 @@ module movekit::access_control_admin_registry {
     }
 
     /// New admin accepts the transfer
-    public fun accept_pending_admin(new_admin: &signer) acquires AdminRegistry {
+    package fun accept_pending_admin(new_admin: &signer) acquires AdminRegistry {
         let new_admin_addr = signer::address_of(new_admin);
         assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
         let registry = &mut AdminRegistry[@movekit];
@@ -96,7 +94,7 @@ module movekit::access_control_admin_registry {
     }
 
     /// Cancel pending admin transfer
-    public fun cancel_admin_transfer(admin: &signer) acquires AdminRegistry {
+    package fun cancel_admin_transfer(admin: &signer) acquires AdminRegistry {
         require_admin(admin);
         let registry = &mut AdminRegistry[@movekit];
         assert!(option::is_some(&registry.pending_admin), E_NO_PENDING_ADMIN);
@@ -114,7 +112,7 @@ module movekit::access_control_admin_registry {
 
     #[view]
     /// Get pending admin address
-    public fun get_pending_admin(): address acquires AdminRegistry {
+    package fun get_pending_admin(): address acquires AdminRegistry {
         assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
         let registry = &AdminRegistry[@movekit];
         assert!(option::is_some(&registry.pending_admin), E_NO_PENDING_ADMIN);
@@ -123,14 +121,14 @@ module movekit::access_control_admin_registry {
 
     #[view]
     /// Check if there's a pending admin transfer
-    public fun has_pending_admin(): bool acquires AdminRegistry {
+    package fun has_pending_admin(): bool acquires AdminRegistry {
         if (!exists<AdminRegistry>(@movekit)) return false;
         let registry = &AdminRegistry[@movekit];
         option::is_some(&registry.pending_admin)
     }
 
     /// Allow friend modules to initialize admin registry (idempotent)
-    friend fun init_admin_registry(admin: &signer) {
+    package fun init_admin_registry(admin: &signer) {
         if (!exists<AdminRegistry>(@movekit)) {
             let admin_addr = signer::address_of(admin);
             move_to(
@@ -152,7 +150,7 @@ module movekit::access_control_admin_registry {
     }
 
     #[test_only]
-    public fun init_for_testing(admin: &signer) {
+    package fun init_for_testing(admin: &signer) {
         init_module(admin);
     }
 }

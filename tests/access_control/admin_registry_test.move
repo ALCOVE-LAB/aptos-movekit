@@ -733,7 +733,6 @@ module movekit::access_control_admin_registry_tests {
         );
 
         // Pending admin state should be created and destroyed properly
-        let admin_addr = signer::address_of(admin);
         assert!(!access_control_admin_registry::has_pending_admin());
 
         access_control_admin_registry::transfer_admin(admin, @0x123);

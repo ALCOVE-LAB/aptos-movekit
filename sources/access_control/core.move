@@ -72,12 +72,12 @@ module movekit::access_control_core {
     // === Admin Delegation Functions ===
 
     /// Propose admin transfer - delegates to admin registry
-    public fun transfer_admin(admin: &signer, new_admin: address) {
+    package fun transfer_admin(admin: &signer, new_admin: address) {
         access_control_admin_registry::transfer_admin(admin, new_admin)
     }
 
     /// Accept pending admin transfer and synchronize role assignments
-    public fun accept_pending_admin(new_admin: &signer) acquires RoleRegistry {
+    package fun accept_pending_admin(new_admin: &signer) acquires RoleRegistry {
         let new_admin_addr = signer::address_of(new_admin);
 
         // Capture current state before any modifications
@@ -109,14 +109,14 @@ module movekit::access_control_core {
     }
 
     /// Cancel pending admin transfer - delegates to admin registry
-    public fun cancel_admin_transfer(admin: &signer) {
+    package fun cancel_admin_transfer(admin: &signer) {
         access_control_admin_registry::cancel_admin_transfer(admin)
     }
 
     // === Role Management Functions ===
 
     /// Grant role to target address (Admin role; admin-only)
-    public fun grant_role<T>(admin: &signer, target: address) acquires RoleRegistry {
+    package fun grant_role<T>(admin: &signer, target: address) acquires RoleRegistry {
         // Security: Prevent manual Admin role manipulation
         assert_not_admin_role<T>();
 
@@ -140,7 +140,7 @@ module movekit::access_control_core {
     }
 
     /// Revoke role from target address (Admin role; admin-only)
-    public fun revoke_role<T>(admin: &signer, target: address) acquires RoleRegistry {
+    package fun revoke_role<T>(admin: &signer, target: address) acquires RoleRegistry {
         // Security: Prevent manual Admin role manipulation
         assert_not_admin_role<T>();
 
@@ -351,13 +351,13 @@ module movekit::access_control_core {
 
     #[test_only]
     /// Initialize system for testing purposes
-    public fun init_for_testing(admin: &signer) acquires RoleRegistry {
+    package fun init_for_testing(admin: &signer) acquires RoleRegistry {
         init_module(admin);
     }
 
     #[test_only]
     /// Test-only function to verify Admin role protection
-    public fun test_admin_role_protection<T>(): bool {
+    package fun test_admin_role_protection<T>(): bool {
         type_info::type_of<T>() == type_info::type_of<Admin>()
     }
 }
