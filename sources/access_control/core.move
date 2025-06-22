@@ -6,6 +6,7 @@ module movekit::access_control_core {
     use std::event;
     use std::type_info::{Self, TypeInfo};
     use aptos_std::table::{Self, Table};
+    use aptos_std::ordered_map::{Self, OrderedMap};
     use std::vector;
     use movekit::access_control_admin_registry;
 
@@ -13,8 +14,8 @@ module movekit::access_control_core {
 
     /// Global role registry mapping addresses to role types
     struct RoleRegistry has key {
-        /// Maps addresses to their assigned role types
-        roles: Table<address, vector<TypeInfo>>
+        /// Maps addresses to their assigned roles
+        roles: Table<address, OrderedMap<TypeInfo, bool>>
     }
 
     /// Built-in Admin role type (managed via transfer only)
@@ -203,7 +204,7 @@ module movekit::access_control_core {
     }
 
     #[view]
-    /// Get all roles assigned to an address
+    /// Get all roles assigned to an address in sorted order
     /// Returns empty vector for uninitialized system or non-existent users
     public fun get_roles(addr: address): vector<TypeInfo> acquires RoleRegistry {
         // Handle uninitialized system gracefully
@@ -214,13 +215,26 @@ module movekit::access_control_core {
         // Handle non-existent user gracefully
         if (!registry.roles.contains(addr)) return vector::empty();
 
-        *registry.roles.borrow(addr)
+        let user_roles = registry.roles.borrow(addr);
+        
+        // Extract keys from OrderedMap (automatically sorted)
+        ordered_map::keys(user_roles)
     }
 
     #[view]
     /// Count total roles assigned to an address
     public fun get_role_count(addr: address): u64 acquires RoleRegistry {
-        get_roles(addr).length()
+        // Handle uninitialized system gracefully
+        if (!exists<RoleRegistry>(@movekit)) return 0;
+
+        let registry = &RoleRegistry[@movekit];
+
+        // Handle non-existent user gracefully
+        if (!registry.roles.contains(addr)) return 0;
+
+        let user_roles = registry.roles.borrow(addr);
+        
+        ordered_map::length(user_roles)
     }
 
     /// Assert caller has required role or abort with clear error
@@ -231,6 +245,8 @@ module movekit::access_control_core {
             E_NO_SUCH_ROLE
         );
     }
+
+
 
     // -- Internal Implementation -- //
 
@@ -256,16 +272,16 @@ module movekit::access_control_core {
         let registry = &mut RoleRegistry[@movekit];
         let role_type = type_info::type_of<T>();
 
-        // Initialize user's role vector if needed
+        // Initialize user's role map if needed
         if (!registry.roles.contains(target)) {
-            registry.roles.add(target, vector::empty<TypeInfo>());
+            registry.roles.add(target, ordered_map::new<TypeInfo, bool>());
         };
 
         let user_roles = registry.roles.borrow_mut(target);
 
         // Only add role if not already present (idempotent operation)
         if (!user_roles.contains(&role_type)) {
-            user_roles.push_back(role_type);
+            user_roles.add(role_type, true);
         }
     }
 
@@ -278,15 +294,15 @@ module movekit::access_control_core {
         if (!registry.roles.contains(target)) return;
 
         let user_roles = registry.roles.borrow_mut(target);
-        let (found, index) = user_roles.find(|role| role == &role_type);
 
         // Only remove if role exists (idempotent operation)
-        if (found) {
-            user_roles.remove(index);
+        if (user_roles.contains(&role_type)) {
+            user_roles.remove(&role_type);
 
-            // Clean up empty role vectors to save storage
-            if (user_roles.is_empty()) {
-                registry.roles.remove(target);
+            // Clean up empty role maps to save storage
+            if (ordered_map::is_empty(user_roles)) {
+                let empty_map = registry.roles.remove(target);
+                ordered_map::destroy_empty(empty_map);
             }
         }
     }
@@ -316,7 +332,7 @@ module movekit::access_control_core {
             move_to(
                 admin,
                 RoleRegistry {
-                    roles: table::new<address, vector<TypeInfo>>()
+                    roles: table::new<address, OrderedMap<TypeInfo, bool>>()
                 }
             );
         };
