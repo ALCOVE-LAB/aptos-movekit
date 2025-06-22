@@ -71,18 +71,6 @@ module movekit::access_control_core {
 
     // === Admin Delegation Functions ===
 
-    #[view]
-    /// Get current admin address from admin registry
-    public fun get_current_admin(): address {
-        access_control_admin_registry::get_current_admin()
-    }
-
-    #[view]
-    /// Check if given address is the current admin
-    public fun is_current_admin(addr: address): bool {
-        access_control_admin_registry::is_current_admin(addr)
-    }
-
     /// Propose admin transfer - delegates to admin registry
     public fun transfer_admin(admin: &signer, new_admin: address) {
         access_control_admin_registry::transfer_admin(admin, new_admin)
@@ -125,24 +113,12 @@ module movekit::access_control_core {
         access_control_admin_registry::cancel_admin_transfer(admin)
     }
 
-    #[view]
-    /// Get pending admin address from admin registry
-    public fun get_pending_admin(): address {
-        access_control_admin_registry::get_pending_admin()
-    }
-
-    #[view]
-    /// Check if admin has pending transfer
-    public fun has_pending_admin(admin: address): bool {
-        access_control_admin_registry::has_pending_admin(admin)
-    }
-
     // === Role Management Functions ===
 
     /// Grant role to target address (Admin role; admin-only)
     public fun grant_role<T>(admin: &signer, target: address) acquires RoleRegistry {
         // Security: Prevent manual Admin role manipulation
-        assert_admin_role_not_protected<T>();
+        assert_not_admin_role<T>();
 
         // Authorize admin access
         require_admin(admin);
@@ -166,7 +142,7 @@ module movekit::access_control_core {
     /// Revoke role from target address (Admin role; admin-only)
     public fun revoke_role<T>(admin: &signer, target: address) acquires RoleRegistry {
         // Security: Prevent manual Admin role manipulation
-        assert_admin_role_not_protected<T>();
+        assert_not_admin_role<T>();
 
         // Authorize admin access
         require_admin(admin);
@@ -186,8 +162,8 @@ module movekit::access_control_core {
     // === View Functions ===
 
     #[view]
-    /// Check if address has specific role
-    /// Returns false gracefully for uninitialized system or non-existent users
+    /// Check if address has a specific role
+    /// Returns false if the registry or user entry does not exist
     public fun has_role<T>(addr: address): bool acquires RoleRegistry {
         // Handle uninitialized system gracefully
         if (!exists<RoleRegistry>(@movekit)) return false;
@@ -204,6 +180,17 @@ module movekit::access_control_core {
     }
 
     #[view]
+    /// Get current admin address from admin registry
+    public fun get_current_admin(): address {
+        access_control_admin_registry::get_current_admin()
+    }
+
+    #[view]
+    /// Check if given address is the current admin
+    public fun is_current_admin(addr: address): bool {
+        access_control_admin_registry::is_current_admin(addr)
+    }
+
     /// Get all roles assigned to an address in sorted order
     /// Returns empty vector for uninitialized system or non-existent users
     public fun get_roles(addr: address): vector<TypeInfo> acquires RoleRegistry {
@@ -216,7 +203,7 @@ module movekit::access_control_core {
         if (!registry.roles.contains(addr)) return vector::empty();
 
         let user_roles = registry.roles.borrow(addr);
-        
+
         // Extract keys from OrderedMap (automatically sorted)
         ordered_map::keys(user_roles)
     }
@@ -233,7 +220,7 @@ module movekit::access_control_core {
         if (!registry.roles.contains(addr)) return 0;
 
         let user_roles = registry.roles.borrow(addr);
-        
+
         ordered_map::length(user_roles)
     }
 
@@ -246,7 +233,17 @@ module movekit::access_control_core {
         );
     }
 
+    #[view]
+    /// Get pending admin address from admin registry
+    public fun get_pending_admin(): address {
+        access_control_admin_registry::get_pending_admin()
+    }
 
+    #[view]
+    /// Check if admin has pending transfer
+    public fun has_pending_admin(admin: address): bool {
+        access_control_admin_registry::has_pending_admin(admin)
+    }
 
     // -- Internal Implementation -- //
 
@@ -313,7 +310,7 @@ module movekit::access_control_core {
     }
 
     /// Security check: prevent manual Admin role manipulation
-    fun assert_admin_role_not_protected<T>() {
+    fun assert_not_admin_role<T>() {
         assert!(
             type_info::type_of<T>() != type_info::type_of<Admin>(),
             E_ADMIN_ROLE_PROTECTED
