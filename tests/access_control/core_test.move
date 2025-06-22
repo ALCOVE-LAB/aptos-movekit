@@ -1,7 +1,6 @@
 #[test_only]
 module movekit::access_control_core_tests {
     use std::signer;
-    use std::vector;
     use movekit::access_control_core::{Self, Admin};
 
     // Test role types
@@ -36,14 +35,10 @@ module movekit::access_control_core_tests {
         let deployer_addr = signer::address_of(deployer);
 
         // Check admin registry was created (delegated functions work)
-        assert!(access_control_core::get_current_admin() == deployer_addr, 0);
-        assert!(access_control_core::is_current_admin(deployer_addr), 1);
-
-        // Check admin role was granted in role registry
-        assert!(access_control_core::has_role<Admin>(deployer_addr), 2);
-
-        // Check role count
-        assert!(access_control_core::get_role_count(deployer_addr) == 1, 3);
+        assert!(access_control_core::get_current_admin() == deployer_addr);
+        assert!(access_control_core::is_current_admin(deployer_addr));
+        assert!(access_control_core::has_role<Admin>(deployer_addr));
+        assert!(access_control_core::get_role_count(deployer_addr) == 1);
     }
 
     #[test(deployer = @movekit)]
@@ -613,7 +608,7 @@ module movekit::access_control_core_tests {
 
         // Initially no roles
         let roles = access_control_core::get_roles(user_addr);
-        assert!(vector::length(&roles) == 0, 0);
+        assert!(roles.length() == 0, 0);
 
         // Grant some roles
         access_control_core::grant_role<Treasurer>(admin, user_addr);
@@ -621,13 +616,13 @@ module movekit::access_control_core_tests {
 
         // Check roles vector
         let roles = access_control_core::get_roles(user_addr);
-        assert!(vector::length(&roles) == 2, 1);
+        assert!(roles.length() == 2, 1);
 
         // Revoke one role
         access_control_core::revoke_role<Treasurer>(admin, user_addr);
 
         let roles = access_control_core::get_roles(user_addr);
-        assert!(vector::length(&roles) == 1, 2);
+        assert!(roles.length() == 1, 2);
     }
 
     #[test(user = @0x123)]
@@ -641,7 +636,7 @@ module movekit::access_control_core_tests {
     #[test]
     fun test_get_roles_no_registry() {
         let roles = access_control_core::get_roles(@0x123);
-        assert!(vector::length(&roles) == 0, 0);
+        assert!(roles.length() == 0, 0);
         assert!(access_control_core::get_role_count(@0x123) == 0, 1);
     }
 

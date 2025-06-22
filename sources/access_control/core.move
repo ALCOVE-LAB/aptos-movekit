@@ -185,13 +185,12 @@ module movekit::access_control_core {
         // Handle uninitialized system gracefully
         if (!exists<RoleRegistry>(@movekit)) return false;
 
-        let registry = borrow_global<RoleRegistry>(@movekit);
+        let registry = &RoleRegistry[@movekit];
 
         // Handle non-existent user gracefully
-        if (!table::contains(&registry.roles, addr))
-            return false;
+        if (!registry.roles.contains(addr)) return false;
 
-        let user_roles = table::borrow(&registry.roles, addr);
+        let user_roles = registry.roles.borrow(addr);
         let target_type = type_info::type_of<T>();
 
         vector_contains(user_roles, &target_type)
@@ -204,19 +203,18 @@ module movekit::access_control_core {
         // Handle uninitialized system gracefully
         if (!exists<RoleRegistry>(@movekit)) return vector::empty();
 
-        let registry = borrow_global<RoleRegistry>(@movekit);
+        let registry = &RoleRegistry[@movekit];
 
         // Handle non-existent user gracefully
-        if (!table::contains(&registry.roles, addr))
-            return vector::empty();
+        if (!registry.roles.contains(addr)) return vector::empty();
 
-        *table::borrow(&registry.roles, addr)
+        *registry.roles.borrow(addr)
     }
 
     #[view]
     /// Count total roles assigned to an address
     public fun get_role_count(addr: address): u64 acquires RoleRegistry {
-        vector::length(&get_roles(addr))
+        get_roles(addr).length()
     }
 
     /// Assert caller has required role or abort with clear error
@@ -249,41 +247,40 @@ module movekit::access_control_core {
 
     /// Internal role granting with duplicate protection
     fun grant_role_internal<T>(target: address) acquires RoleRegistry {
-        let registry = borrow_global_mut<RoleRegistry>(@movekit);
+        let registry = &mut RoleRegistry[@movekit];
         let role_type = type_info::type_of<T>();
 
         // Initialize user's role vector if needed
-        if (!table::contains(&registry.roles, target)) {
-            table::add(&mut registry.roles, target, vector::empty<TypeInfo>());
+        if (!registry.roles.contains(target)) {
+            registry.roles.add(target, vector::empty<TypeInfo>());
         };
 
-        let user_roles = table::borrow_mut(&mut registry.roles, target);
+        let user_roles = registry.roles.borrow_mut(target);
 
         // Only add role if not already present (idempotent operation)
         if (!vector_contains(user_roles, &role_type)) {
-            vector::push_back(user_roles, role_type);
+            user_roles.push_back(role_type);
         }
     }
 
     /// Internal role revocation with non-existence protection
     fun revoke_role_internal<T>(target: address) acquires RoleRegistry {
-        let registry = borrow_global_mut<RoleRegistry>(@movekit);
+        let registry = &mut RoleRegistry[@movekit];
         let role_type = type_info::type_of<T>();
 
         // Handle non-existent user gracefully
-        if (!table::contains(&registry.roles, target))
-            return;
+        if (!registry.roles.contains(target)) return;
 
-        let user_roles = table::borrow_mut(&mut registry.roles, target);
+        let user_roles = registry.roles.borrow_mut(target);
         let (found, index) = vector_find(user_roles, &role_type);
 
         // Only remove if role exists (idempotent operation)
         if (found) {
-            vector::remove(user_roles, index);
+            user_roles.remove(index);
 
             // Clean up empty role vectors to save storage
-            if (vector::is_empty(user_roles)) {
-                table::remove(&mut registry.roles, target);
+            if (user_roles.is_empty()) {
+                registry.roles.remove(target);
             }
         }
     }
@@ -309,13 +306,13 @@ module movekit::access_control_core {
 
     /// Find element in vector with safe indexing
     fun vector_find(vec: &vector<TypeInfo>, item: &TypeInfo): (bool, u64) {
-        let len = vector::length(vec);
+        let len = vec.length();
         let i = 0;
         while (i < len) {
-            if (vector::borrow(vec, i) == item) {
+            if (vec.borrow(i) == item) {
                 return (true, i)
             };
-            i = i + 1;
+            i += 1;
         };
         (false, 0) // Return 0 as dummy index when not found
     }
