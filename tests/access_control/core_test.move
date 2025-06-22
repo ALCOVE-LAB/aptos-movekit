@@ -107,7 +107,7 @@ module movekit::access_control_core_tests {
         access_control_core::transfer_admin(admin, new_admin_addr);
 
         // Check pending state (delegated functions)
-        assert!(access_control_core::has_pending_admin(admin_addr), 0);
+        assert!(access_control_core::has_pending_admin(), 0);
         assert!(access_control_core::get_pending_admin() == new_admin_addr, 1);
 
         // Admin should still be current
@@ -128,7 +128,7 @@ module movekit::access_control_core_tests {
         assert!(!access_control_core::has_role<Admin>(admin_addr), 9);
 
         // Check pending admin cleaned up (delegated to admin registry)
-        assert!(!access_control_core::has_pending_admin(admin_addr), 10);
+        assert!(!access_control_core::has_pending_admin(), 10);
     }
 
     #[test(admin = @movekit, new_admin = @0x123)]
@@ -142,7 +142,7 @@ module movekit::access_control_core_tests {
 
         // Propose transfer
         access_control_core::transfer_admin(admin, new_admin_addr);
-        assert!(access_control_core::has_pending_admin(admin_addr), 0);
+        assert!(access_control_core::has_pending_admin(), 0);
 
         // Cancel transfer (delegated to admin registry)
         access_control_core::cancel_admin_transfer(admin);
@@ -153,7 +153,7 @@ module movekit::access_control_core_tests {
         assert!(access_control_core::has_role<Admin>(admin_addr), 3);
 
         // Check pending admin cleaned up
-        assert!(!access_control_core::has_pending_admin(admin_addr), 4);
+        assert!(!access_control_core::has_pending_admin(), 4);
     }
 
     #[test(admin = @movekit, new_admin = @0x123)]

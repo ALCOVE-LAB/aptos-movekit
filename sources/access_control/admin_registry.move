@@ -1,15 +1,13 @@
 module movekit::access_control_admin_registry {
     use std::signer;
     use std::event;
+    use std::option::{Self, Option};
 
     friend movekit::access_control_core;
 
     struct AdminRegistry has key {
-        current_admin: address
-    }
-
-    struct PendingAdmin has key, drop {
-        pending_admin: address
+        current_admin: address,
+        pending_admin: Option<address>
     }
 
     // -- Constants -- //
@@ -59,18 +57,14 @@ module movekit::access_control_admin_registry {
     }
 
     /// Current admin proposes new admin
-    public fun transfer_admin(admin: &signer, new_admin: address) acquires AdminRegistry, PendingAdmin {
+    public fun transfer_admin(admin: &signer, new_admin: address) acquires AdminRegistry {
         require_admin(admin);
         let admin_addr = signer::address_of(admin);
         assert!(new_admin != admin_addr, E_SELF_TRANSFER_NOT_ALLOWED);
 
-        // Set or update pending admin
-        if (exists<PendingAdmin>(admin_addr)) {
-            let pending = &mut PendingAdmin[admin_addr];
-            pending.pending_admin = new_admin;
-        } else {
-            move_to(admin, PendingAdmin { pending_admin: new_admin });
-        };
+        // Set pending admin in registry
+        let registry = &mut AdminRegistry[@movekit];
+        registry.pending_admin = option::some(new_admin);
 
         event::emit(
             AdminTransferProposed { current_admin: admin_addr, pending_admin: new_admin }
@@ -78,26 +72,22 @@ module movekit::access_control_admin_registry {
     }
 
     /// New admin accepts the transfer
-    public fun accept_pending_admin(new_admin: &signer) acquires AdminRegistry, PendingAdmin {
+    public fun accept_pending_admin(new_admin: &signer) acquires AdminRegistry {
         let new_admin_addr = signer::address_of(new_admin);
-        let current_admin_addr = get_current_admin();
+        assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
+        let registry = &mut AdminRegistry[@movekit];
 
         // Check that there's a pending admin transfer
-        assert!(exists<PendingAdmin>(current_admin_addr), E_NO_PENDING_ADMIN);
-
-        // Get the pending admin info
-        let pending = &PendingAdmin[current_admin_addr];
+        assert!(option::is_some(&registry.pending_admin), E_NO_PENDING_ADMIN);
 
         // Verify that the caller is the intended new admin
-        assert!(pending.pending_admin == new_admin_addr, E_NOT_PENDING_ADMIN);
+        let pending_admin_addr = *option::borrow(&registry.pending_admin);
+        assert!(pending_admin_addr == new_admin_addr, E_NOT_PENDING_ADMIN);
 
-        // Update AdminRegistry to point to new admin
-        let registry = &mut AdminRegistry[@movekit];
+        // Update registry
         let old_admin = registry.current_admin;
         registry.current_admin = new_admin_addr;
-
-        // Clean up: Remove PendingAdmin resource from old admin's address
-        let _removed_pending = move_from<PendingAdmin>(current_admin_addr);
+        registry.pending_admin = option::none();
 
         // Emit completion event
         event::emit(
@@ -106,40 +96,47 @@ module movekit::access_control_admin_registry {
     }
 
     /// Cancel pending admin transfer
-    public fun cancel_admin_transfer(admin: &signer) acquires AdminRegistry, PendingAdmin {
-        let admin_addr = signer::address_of(admin);
+    public fun cancel_admin_transfer(admin: &signer) acquires AdminRegistry {
         require_admin(admin);
-        assert!(exists<PendingAdmin>(admin_addr), E_NO_PENDING_ADMIN);
+        let registry = &mut AdminRegistry[@movekit];
+        assert!(option::is_some(&registry.pending_admin), E_NO_PENDING_ADMIN);
 
-        let pending = move_from<PendingAdmin>(admin_addr);
+        let canceled_pending = *option::borrow(&registry.pending_admin);
+        registry.pending_admin = option::none();
 
         event::emit(
             AdminTransferCanceled {
-                admin: admin_addr,
-                canceled_pending: pending.pending_admin
+                admin: signer::address_of(admin),
+                canceled_pending: canceled_pending
             }
         );
     }
 
     #[view]
     /// Get pending admin address
-    public fun get_pending_admin(): address acquires AdminRegistry, PendingAdmin {
-        let current_admin = get_current_admin();
-        assert!(exists<PendingAdmin>(current_admin), E_NO_PENDING_ADMIN);
-        (&PendingAdmin[current_admin]).pending_admin
+    public fun get_pending_admin(): address acquires AdminRegistry {
+        assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
+        let registry = &AdminRegistry[@movekit];
+        assert!(option::is_some(&registry.pending_admin), E_NO_PENDING_ADMIN);
+        *option::borrow(&registry.pending_admin)
     }
 
     #[view]
     /// Check if there's a pending admin transfer
-    public fun has_pending_admin(admin: address): bool {
-        exists<PendingAdmin>(admin)
+    public fun has_pending_admin(): bool acquires AdminRegistry {
+        if (!exists<AdminRegistry>(@movekit)) return false;
+        let registry = &AdminRegistry[@movekit];
+        option::is_some(&registry.pending_admin)
     }
 
     /// Allow friend modules to initialize admin registry (idempotent)
     friend fun init_admin_registry(admin: &signer) {
         if (!exists<AdminRegistry>(@movekit)) {
             let admin_addr = signer::address_of(admin);
-            move_to(admin, AdminRegistry { current_admin: admin_addr });
+            move_to(
+                admin,
+                AdminRegistry { current_admin: admin_addr, pending_admin: option::none() }
+            );
         }
     }
 
@@ -148,7 +145,10 @@ module movekit::access_control_admin_registry {
     fun init_module(admin: &signer) {
         let admin_addr = signer::address_of(admin);
         // admin signer represents @movekit during deployment
-        move_to(admin, AdminRegistry { current_admin: admin_addr });
+        move_to(
+            admin,
+            AdminRegistry { current_admin: admin_addr, pending_admin: option::none() }
+        );
     }
 
     #[test_only]

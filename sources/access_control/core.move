@@ -85,7 +85,7 @@ module movekit::access_control_core {
 
         // Validate pending transfer exists and matches caller
         assert!(
-            access_control_admin_registry::has_pending_admin(current_admin_addr),
+            access_control_admin_registry::has_pending_admin(),
             E_NOT_INITIALIZED
         );
         assert!(
@@ -241,8 +241,8 @@ module movekit::access_control_core {
 
     #[view]
     /// Check if admin has pending transfer
-    public fun has_pending_admin(admin: address): bool {
-        access_control_admin_registry::has_pending_admin(admin)
+    public fun has_pending_admin(): bool {
+        access_control_admin_registry::has_pending_admin()
     }
 
     // -- Internal Implementation -- //

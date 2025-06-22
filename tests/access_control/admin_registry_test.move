@@ -26,7 +26,7 @@ module movekit::access_control_admin_registry_tests {
         assert!(access_control_admin_registry::is_current_admin(deployer_addr));
 
         // No pending admin initially
-        assert!(!access_control_admin_registry::has_pending_admin(deployer_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     #[test(deployer = @movekit)]
@@ -127,7 +127,7 @@ module movekit::access_control_admin_registry_tests {
         access_control_admin_registry::transfer_admin(admin, new_admin_addr);
 
         // Check pending state
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(access_control_admin_registry::has_pending_admin());
         assert!(access_control_admin_registry::get_pending_admin() == new_admin_addr);
 
         // Admin should still be current
@@ -144,7 +144,7 @@ module movekit::access_control_admin_registry_tests {
         assert!(!access_control_admin_registry::is_current_admin(admin_addr));
 
         // Check pending admin cleaned up
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     #[test(admin = @movekit, new_admin = @0x123)]
@@ -177,7 +177,7 @@ module movekit::access_control_admin_registry_tests {
 
         // Propose transfer
         access_control_admin_registry::transfer_admin(admin, new_admin_addr);
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(access_control_admin_registry::has_pending_admin());
 
         // Cancel transfer
         access_control_admin_registry::cancel_admin_transfer(admin);
@@ -187,7 +187,7 @@ module movekit::access_control_admin_registry_tests {
         assert!(access_control_admin_registry::is_current_admin(admin_addr));
 
         // Check pending admin cleaned up
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     // ===========================================
@@ -398,8 +398,7 @@ module movekit::access_control_admin_registry_tests {
         // Should allow transfer to zero address (for renouncing)
         access_control_admin_registry::transfer_admin(admin, @0x0);
 
-        let admin_addr = signer::address_of(admin);
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(access_control_admin_registry::has_pending_admin());
         assert!(access_control_admin_registry::get_pending_admin() == @0x0);
     }
 
@@ -425,25 +424,22 @@ module movekit::access_control_admin_registry_tests {
     fun test_has_pending_admin_various_states(admin: &signer) {
         access_control_admin_registry::init_for_testing(admin);
 
-        let admin_addr = signer::address_of(admin);
-
         // Initially no pending admin
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
 
         // After proposing transfer
         access_control_admin_registry::transfer_admin(admin, @0x123);
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(access_control_admin_registry::has_pending_admin());
 
         // After canceling
         access_control_admin_registry::cancel_admin_transfer(admin);
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     #[test]
     fun test_has_pending_admin_nonexistent_address() {
-        // Should return false for addresses that never had pending admin
-        assert!(!access_control_admin_registry::has_pending_admin(@0x123));
-        assert!(!access_control_admin_registry::has_pending_admin(@0x456));
+        // Should return false for uninitialized registry
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     // ===========================================
@@ -528,18 +524,15 @@ module movekit::access_control_admin_registry_tests {
     ) {
         access_control_admin_registry::init_for_testing(admin);
 
-        let admin_addr = signer::address_of(admin);
         let new_admin_addr = signer::address_of(new_admin);
 
         // Propose and accept transfer
         access_control_admin_registry::transfer_admin(admin, new_admin_addr);
         access_control_admin_registry::accept_pending_admin(new_admin);
 
-        // Old admin should no longer have pending admin
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
-
-        // New admin should not have pending admin either
-        assert!(!access_control_admin_registry::has_pending_admin(new_admin_addr));
+        // No longer has pending admin after transfer
+        assert!(!access_control_admin_registry::has_pending_admin());
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     #[test(admin = @movekit, new_admin = @0x123)]
@@ -548,18 +541,15 @@ module movekit::access_control_admin_registry_tests {
     ) {
         access_control_admin_registry::init_for_testing(admin);
 
-        let admin_addr = signer::address_of(admin);
         let new_admin_addr = signer::address_of(new_admin);
 
         // Propose and cancel transfer
         access_control_admin_registry::transfer_admin(admin, new_admin_addr);
         access_control_admin_registry::cancel_admin_transfer(admin);
 
-        // Admin should no longer have pending admin
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
-
-        // New admin should not have pending admin
-        assert!(!access_control_admin_registry::has_pending_admin(new_admin_addr));
+        // No longer has pending admin after cancellation
+        assert!(!access_control_admin_registry::has_pending_admin());
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     // ===========================================
@@ -572,54 +562,42 @@ module movekit::access_control_admin_registry_tests {
     ) {
         access_control_admin_registry::init_for_testing(admin);
 
-        let admin_addr = signer::address_of(admin);
         let new_admin_addr = signer::address_of(new_admin);
 
         // Setup transfer
         access_control_admin_registry::transfer_admin(admin, new_admin_addr);
 
         // Verify pending admin exists
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(access_control_admin_registry::has_pending_admin());
 
         // Accept transfer
         access_control_admin_registry::accept_pending_admin(new_admin);
 
-        // Verify NO pending admin resources exist anywhere
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
-        assert!(!access_control_admin_registry::has_pending_admin(new_admin_addr));
-        assert!(!access_control_admin_registry::has_pending_admin(@movekit));
-
-        // Test random addresses too
-        assert!(!access_control_admin_registry::has_pending_admin(@0x999));
-        assert!(!access_control_admin_registry::has_pending_admin(@0x888));
+        // Verify NO pending admin state exists
+        assert!(!access_control_admin_registry::has_pending_admin());
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     #[test(admin = @movekit)]
     fun test_no_pending_admin_leaks_after_cancel(admin: &signer) {
         access_control_admin_registry::init_for_testing(admin);
 
-        let admin_addr = signer::address_of(admin);
-
         // Setup transfer
         access_control_admin_registry::transfer_admin(admin, @0x123);
 
         // Verify pending admin exists
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(access_control_admin_registry::has_pending_admin());
 
         // Cancel transfer
         access_control_admin_registry::cancel_admin_transfer(admin);
 
-        // Verify NO pending admin resources exist anywhere
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
-        assert!(!access_control_admin_registry::has_pending_admin(@0x123));
-        assert!(!access_control_admin_registry::has_pending_admin(@movekit));
+        // Verify NO pending admin state exists
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     #[test(admin = @movekit)]
     fun test_no_pending_admin_leaks_after_overwrite(admin: &signer) {
         access_control_admin_registry::init_for_testing(admin);
-
-        let admin_addr = signer::address_of(admin);
 
         // Multiple overwrites
         access_control_admin_registry::transfer_admin(admin, @0x111);
@@ -627,12 +605,12 @@ module movekit::access_control_admin_registry_tests {
         access_control_admin_registry::transfer_admin(admin, @0x333);
 
         // Should only have ONE pending admin (the latest)
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(access_control_admin_registry::has_pending_admin());
         assert!(access_control_admin_registry::get_pending_admin() == @0x333);
 
         // Cancel and verify clean slate
         access_control_admin_registry::cancel_admin_transfer(admin);
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     // ===========================================
@@ -664,7 +642,6 @@ module movekit::access_control_admin_registry_tests {
     ) {
         access_control_admin_registry::init_for_testing(admin);
 
-        let admin_addr = signer::address_of(admin);
         let new_admin_addr = signer::address_of(new_admin);
 
         // Rapid sequence: propose -> cancel -> propose -> accept
@@ -675,14 +652,13 @@ module movekit::access_control_admin_registry_tests {
 
         // Verify final state is correct
         assert!(access_control_admin_registry::get_current_admin() == new_admin_addr);
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     #[test(admin = @movekit, new_admin = @0x123)]
     fun test_interleaved_operations(admin: &signer, new_admin: &signer) {
         access_control_admin_registry::init_for_testing(admin);
 
-        let admin_addr = signer::address_of(admin);
         let new_admin_addr = signer::address_of(new_admin);
 
         // Complex sequence testing state machine robustness
@@ -691,7 +667,10 @@ module movekit::access_control_admin_registry_tests {
 
         // Verify state is correct before accept
         assert!(access_control_admin_registry::get_pending_admin() == new_admin_addr);
-        assert!(access_control_admin_registry::get_current_admin() == admin_addr);
+        assert!(
+            access_control_admin_registry::get_current_admin()
+                == signer::address_of(admin)
+        );
 
         // Accept should work
         access_control_admin_registry::accept_pending_admin(new_admin);
@@ -715,19 +694,19 @@ module movekit::access_control_admin_registry_tests {
         // Initial state verification
         assert!(access_control_admin_registry::is_current_admin(admin_addr));
         assert!(access_control_admin_registry::get_current_admin() == admin_addr);
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
 
         // After proposal
         access_control_admin_registry::transfer_admin(admin, @0x123);
         assert!(access_control_admin_registry::is_current_admin(admin_addr)); // Still current
         assert!(access_control_admin_registry::get_current_admin() == admin_addr); // Still current
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr)); // Now has pending
+        assert!(access_control_admin_registry::has_pending_admin()); // Now has pending
 
         // After cancel
         access_control_admin_registry::cancel_admin_transfer(admin);
         assert!(access_control_admin_registry::is_current_admin(admin_addr)); // Still current
         assert!(access_control_admin_registry::get_current_admin() == admin_addr); // Still current
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr)); // No longer pending
+        assert!(!access_control_admin_registry::has_pending_admin()); // No longer pending
     }
 
     #[test(admin = @movekit)]
@@ -753,15 +732,15 @@ module movekit::access_control_admin_registry_tests {
             2
         );
 
-        // PendingAdmin should be created and destroyed properly
+        // Pending admin state should be created and destroyed properly
         let admin_addr = signer::address_of(admin);
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
 
         access_control_admin_registry::transfer_admin(admin, @0x123);
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(access_control_admin_registry::has_pending_admin());
 
         access_control_admin_registry::cancel_admin_transfer(admin);
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
     }
 
     // ===========================================
@@ -807,14 +786,14 @@ module movekit::access_control_admin_registry_tests {
         // Invariant: AdminRegistry always exists after initialization
         assert!(access_control_admin_registry::get_current_admin() == admin_addr);
 
-        // Invariant: PendingAdmin exists iff there's an active proposal
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        // Invariant: Pending admin state exists iff there's an active proposal
+        assert!(!access_control_admin_registry::has_pending_admin());
 
         access_control_admin_registry::transfer_admin(admin, @0x123);
-        assert!(access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(access_control_admin_registry::has_pending_admin());
 
         access_control_admin_registry::cancel_admin_transfer(admin);
-        assert!(!access_control_admin_registry::has_pending_admin(admin_addr));
+        assert!(!access_control_admin_registry::has_pending_admin());
 
         // Invariant: get_current_admin() always returns a valid address
         let current = access_control_admin_registry::get_current_admin();
