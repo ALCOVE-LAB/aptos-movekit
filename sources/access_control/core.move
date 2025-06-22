@@ -39,16 +39,18 @@ module movekit::access_control_core {
 
     #[event]
     /// Emitted when a role is successfully granted to an address
-    struct RoleGrantedEvent<phantom T> has copy, drop, store {
+    struct RoleGranted<phantom T> has copy, drop, store {
         /// Address of admin who granted the role
         admin: address,
         /// Address that received the role
-        target: address
+        target: address,
+        /// Type information of the granted role
+        role: TypeInfo
     }
 
     #[event]
     /// Emitted when a role is successfully revoked from an address
-    struct RoleRevokedEvent<phantom T> has copy, drop, store {
+    struct RoleRevoked<phantom T> has copy, drop, store {
         /// Address of admin who revoked the role
         admin: address,
         /// Address that lost the role
@@ -56,8 +58,8 @@ module movekit::access_control_core {
     }
 
     #[event]
-    /// Emitted when admin role synchronization occurs during transfer
-    struct AdminRoleSynchronized has copy, drop, store {
+    /// Emitted when admin role is transferred to a new admin
+    struct AdminRoleTransferred has copy, drop, store {
         /// Previous admin who lost Admin role
         old_admin: address,
         /// New admin who gained Admin role
@@ -110,7 +112,7 @@ module movekit::access_control_core {
 
         // Emit synchronization event for audit trail
         event::emit(
-            AdminRoleSynchronized {
+            AdminRoleTransferred {
                 old_admin: current_admin_addr,
                 new_admin: new_admin_addr
             }
@@ -152,7 +154,11 @@ module movekit::access_control_core {
 
         // Emit audit event
         event::emit(
-            RoleGrantedEvent<T> { admin: signer::address_of(admin), target: target }
+            RoleGranted<T> {
+                admin: signer::address_of(admin),
+                target: target,
+                role: type_info::type_of<T>()
+            }
         );
     }
 
@@ -172,7 +178,7 @@ module movekit::access_control_core {
 
         // Emit audit event
         event::emit(
-            RoleRevokedEvent<T> { admin: signer::address_of(admin), target: target }
+            RoleRevoked<T> { admin: signer::address_of(admin), target: target }
         );
     }
 
@@ -193,7 +199,7 @@ module movekit::access_control_core {
         let user_roles = registry.roles.borrow(addr);
         let target_type = type_info::type_of<T>();
 
-        vector_contains(user_roles, &target_type)
+        user_roles.contains(&target_type)
     }
 
     #[view]
@@ -258,7 +264,7 @@ module movekit::access_control_core {
         let user_roles = registry.roles.borrow_mut(target);
 
         // Only add role if not already present (idempotent operation)
-        if (!vector_contains(user_roles, &role_type)) {
+        if (!user_roles.contains(&role_type)) {
             user_roles.push_back(role_type);
         }
     }
@@ -272,7 +278,7 @@ module movekit::access_control_core {
         if (!registry.roles.contains(target)) return;
 
         let user_roles = registry.roles.borrow_mut(target);
-        let (found, index) = vector_find(user_roles, &role_type);
+        let (found, index) = user_roles.find(|role| role == &role_type);
 
         // Only remove if role exists (idempotent operation)
         if (found) {
@@ -298,25 +304,6 @@ module movekit::access_control_core {
         );
     }
 
-    /// Check if vector contains specific element
-    fun vector_contains(vec: &vector<TypeInfo>, item: &TypeInfo): bool {
-        let (found, _) = vector_find(vec, item);
-        found
-    }
-
-    /// Find element in vector with safe indexing
-    fun vector_find(vec: &vector<TypeInfo>, item: &TypeInfo): (bool, u64) {
-        let len = vec.length();
-        let i = 0;
-        while (i < len) {
-            if (vec.borrow(i) == item) {
-                return (true, i)
-            };
-            i += 1;
-        };
-        (false, 0) // Return 0 as dummy index when not found
-    }
-
     /// System initialization - creates role registry and grants initial Admin role
     fun init_module(admin: &signer) acquires RoleRegistry {
         let admin_addr = signer::address_of(admin);
@@ -338,7 +325,13 @@ module movekit::access_control_core {
         grant_role_internal<Admin>(admin_addr);
 
         // Emit initial role grant event
-        event::emit(RoleGrantedEvent<Admin> { admin: admin_addr, target: admin_addr });
+        event::emit(
+            RoleGranted<Admin> {
+                admin: admin_addr,
+                target: admin_addr,
+                role: type_info::type_of<Admin>()
+            }
+        );
     }
 
     // -- Testing Support -- //
