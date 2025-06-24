@@ -67,9 +67,7 @@ module movekit::access_control_core {
         new_admin: address
     }
 
-    // -- Public Interface -- //
-
-    // === Admin Delegation Functions ===
+    // -- Package Functions -- //
 
     /// Propose admin transfer - delegates to admin registry
     package fun transfer_admin(admin: &signer, new_admin: address) {
@@ -113,7 +111,7 @@ module movekit::access_control_core {
         access_control_admin_registry::cancel_admin_transfer(admin)
     }
 
-    // === Role Management Functions ===
+    // -- Role Management Functions -- //
 
     /// Grant role to target address (Admin role; admin-only)
     package fun grant_role<T>(admin: &signer, target: address) acquires RoleRegistry {
@@ -155,11 +153,22 @@ module movekit::access_control_core {
 
         // Emit audit event
         event::emit(
-            RoleRevoked<T> { admin: signer::address_of(admin), target: target }
+            RoleRevoked<T> { admin: signer::address_of(admin), target: target }        
         );
     }
 
-    // === View Functions ===
+    // -- Public functions -- //
+
+    /// Assert caller has required role or abort with clear error
+    /// Useful for other modules requiring specific role authorization
+    public fun require_role<T>(account: &signer) acquires RoleRegistry {
+        assert!(
+            has_role<T>(signer::address_of(account)),
+            E_NO_SUCH_ROLE
+        );
+    }
+
+    // -- View Functions -- //
 
     #[view]
     /// Check if address has a specific role
@@ -191,6 +200,7 @@ module movekit::access_control_core {
         access_control_admin_registry::is_current_admin(addr)
     }
 
+    #[view]
     /// Get all roles assigned to an address in sorted order
     /// Returns empty vector for uninitialized system or non-existent users
     public fun get_roles(addr: address): vector<TypeInfo> acquires RoleRegistry {
@@ -224,14 +234,6 @@ module movekit::access_control_core {
         ordered_map::length(user_roles)
     }
 
-    /// Assert caller has required role or abort with clear error
-    /// Useful for other modules requiring specific role authorization
-    public fun require_role<T>(account: &signer) acquires RoleRegistry {
-        assert!(
-            has_role<T>(signer::address_of(account)),
-            E_NO_SUCH_ROLE
-        );
-    }
 
     #[view]
     /// Get pending admin address from admin registry
@@ -353,11 +355,5 @@ module movekit::access_control_core {
     /// Initialize system for testing purposes
     package fun init_for_testing(admin: &signer) acquires RoleRegistry {
         init_module(admin);
-    }
-
-    #[test_only]
-    /// Test-only function to verify Admin role protection
-    package fun test_admin_role_protection<T>(): bool {
-        type_info::type_of<T>() == type_info::type_of<Admin>()
     }
 }

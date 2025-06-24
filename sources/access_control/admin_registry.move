@@ -37,17 +37,6 @@ module movekit::access_control_admin_registry {
 
     // -- Package Functions -- //
 
-    #[view]
-    package fun get_current_admin(): address acquires AdminRegistry {
-        assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
-        (&AdminRegistry[@movekit]).current_admin
-    }
-
-    #[view]
-    package fun is_current_admin(addr: address): bool acquires AdminRegistry {
-        get_current_admin() == addr
-    }
-
     package fun require_admin(admin: &signer) acquires AdminRegistry {
         assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
         let registry = &AdminRegistry[@movekit];
@@ -110,6 +99,17 @@ module movekit::access_control_admin_registry {
         );
     }
 
+    /// Allow friend modules to initialize admin registry (idempotent)
+    package fun init_admin_registry(admin: &signer) {
+        if (!exists<AdminRegistry>(@movekit)) {
+            let admin_addr = signer::address_of(admin);
+            move_to(
+                admin,
+                AdminRegistry { current_admin: admin_addr, pending_admin: option::none() }
+            );
+        }
+    }
+
     #[view]
     /// Get pending admin address
     package fun get_pending_admin(): address acquires AdminRegistry {
@@ -127,15 +127,15 @@ module movekit::access_control_admin_registry {
         option::is_some(&registry.pending_admin)
     }
 
-    /// Allow friend modules to initialize admin registry (idempotent)
-    package fun init_admin_registry(admin: &signer) {
-        if (!exists<AdminRegistry>(@movekit)) {
-            let admin_addr = signer::address_of(admin);
-            move_to(
-                admin,
-                AdminRegistry { current_admin: admin_addr, pending_admin: option::none() }
-            );
-        }
+    #[view]
+    package fun get_current_admin(): address acquires AdminRegistry {
+        assert!(exists<AdminRegistry>(@movekit), E_NOT_INITIALIZED);
+        (&AdminRegistry[@movekit]).current_admin
+    }
+
+    #[view]
+    package fun is_current_admin(addr: address): bool acquires AdminRegistry {
+        get_current_admin() == addr
     }
 
     // -- Private Functions -- //
