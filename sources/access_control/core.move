@@ -153,7 +153,7 @@ module movekit::access_control_core {
 
         // Emit audit event
         event::emit(
-            RoleRevoked<T> { admin: signer::address_of(admin), target: target }        
+            RoleRevoked<T> { admin: signer::address_of(admin), target: target }
         );
     }
 
@@ -233,7 +233,6 @@ module movekit::access_control_core {
 
         ordered_map::length(user_roles)
     }
-
 
     #[view]
     /// Get pending admin address from admin registry
