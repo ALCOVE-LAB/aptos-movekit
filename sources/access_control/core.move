@@ -138,7 +138,7 @@ module movekit::access_control_core {
     }
 
     /// Revoke role from target address (Admin role; admin-only)
-    package fun revoke_role<T>(admin: &signer, target: address) acquires RoleRegistry {
+    public fun revoke_role<T>(admin: &signer, target: address) acquires RoleRegistry {
         // Security: Prevent manual Admin role manipulation
         assert_not_admin_role<T>();
 
