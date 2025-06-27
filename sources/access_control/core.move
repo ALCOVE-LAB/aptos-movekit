@@ -114,7 +114,7 @@ module movekit::access_control_core {
     // -- Role Management Functions -- //
 
     /// Grant role to target address (Admin role; admin-only)
-    package fun grant_role<T>(admin: &signer, target: address) acquires RoleRegistry {
+    public fun grant_role<T>(admin: &signer, target: address) acquires RoleRegistry {
         // Security: Prevent manual Admin role manipulation
         assert_not_admin_role<T>();
 
