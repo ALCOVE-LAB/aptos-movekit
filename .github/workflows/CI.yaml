@@ -1,0 +1,45 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Aptos CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://aptos.dev/scripts/install_cli.py" | python3
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install Aptos Move fmt
+        run: |
+          aptos update movefmt
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "FORMATTER_EXE=$HOME/.local/bin/movefmt" >> $GITHUB_ENV
+
+      - name: Format Check
+        run: |
+          aptos move fmt
+          git diff --exit-code
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Aptos CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://aptos.dev/scripts/install_cli.py" | python3
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Run Aptos Move Tests
+        run: aptos move test --dev
+
+      - name: Run Aptos Move Linter
+        run: aptos move lint --dev
